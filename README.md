@@ -3,6 +3,7 @@
 [![Android](https://img.shields.io/badge/Platform-Android-3DDC84.svg?style=flat&logo=android)](https://developer.android.com/)
 [![Kotlin](https://img.shields.io/badge/Language-Kotlin-7F52FF.svg?style=flat&logo=kotlin)](https://kotlinlang.org/)
 [![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose%20M3-4285F4.svg?style=flat&logo=jetpackcompose)](https://developer.android.com/jetpack/compose)
+[![Build & Release Android APK](https://img.shields.io/badge/GitHub%20Actions-Automated%20APK%20Release-blue.svg?style=flat&logo=githubactions)](https://github.com/)
 [![Cloud Firestore](https://img.shields.io/badge/Database-Cloud%20Firestore%20%2B%20Room-FFCA28.svg?style=flat&logo=firebase)](https://firebase.google.com/)
 [![Firebase Cloud Messaging](https://img.shields.io/badge/Push-FCM%20%2B%20Service%20Worker-FF6F00.svg?style=flat&logo=firebase)](https://firebase.google.com/docs/cloud-messaging)
 
@@ -85,6 +86,23 @@ gradle :app:testDebugUnitTest
 ### Output APK
 The compiled debug APK is located at:
 `app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## 🤖 Automated APK Releases via GitHub Actions
+
+This repository includes a continuous integration and automated release workflow configured at [`.github/workflows/release-apk.yml`](.github/workflows/release-apk.yml).
+
+### How it Works:
+1. **On Every Push to `main`**:
+   - Automatically builds the APK and creates an updated GitHub Release with downloadable APKs (`mb-nursing-home-hms-v1.0.<build_number>.apk` and `mb-nursing-home-hms-latest.apk`).
+2. **On Git Version Tags (e.g. `v1.0.0`)**:
+   - Pushing a version tag (`git tag v1.0.0 && git push origin v1.0.0`) automatically publishes a tagged GitHub Release with the APK attached.
+3. **Manual 1-Click Trigger (`workflow_dispatch`)**:
+   - Navigate to the **Actions** tab on your GitHub repository.
+   - Select **"Build & Release Android APK"**.
+   - Click **Run workflow**, optionally type a release version, and click **Run**.
+   - The compiled APK will be uploaded to both GitHub Releases and the workflow Artifacts.
 
 ---
 
