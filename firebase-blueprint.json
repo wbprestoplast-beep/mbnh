@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "Patient": {
+      "title": "Patient",
+      "description": "Patient admission record at MB Nursing Home",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Patient full name" },
+        "age": { "type": "integer", "description": "Patient age in years" },
+        "gender": { "type": "string", "description": "Gender (M, F, Other)" },
+        "ward": { "type": "string", "description": "Assigned ward" },
+        "bed": { "type": "string", "description": "Assigned bed code" },
+        "doctorId": { "type": "string", "description": "Assigned doctor ID" },
+        "admittedOn": { "type": "string", "description": "Date of admission" },
+        "condition": { "type": "string", "description": "Clinical condition or diagnosis" },
+        "phone": { "type": "string", "description": "Emergency contact phone number" },
+        "referralDoctorId": { "type": "string", "description": "Referred doctor ID if applicable" },
+        "referralReason": { "type": "string", "description": "Clinical referral notes" },
+        "referralBy": { "type": "string", "description": "Doctor who initiated referral" },
+        "referralDate": { "type": "string", "description": "Date of referral" },
+        "lastUpdated": { "type": "integer", "description": "Last update epoch millis" }
+      },
+      "required": ["name", "age", "ward", "bed", "doctorId"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Hospital alert or broadcast notification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Notification ID" },
+        "title": { "type": "string", "description": "Notification title" },
+        "body": { "type": "string", "description": "Notification message body" },
+        "time": { "type": "string", "description": "Time string" },
+        "audience": { "type": "string", "description": "Target audience (all, doctor, nurse, etc.)" },
+        "read": { "type": "boolean", "description": "Read status" },
+        "kind": { "type": "string", "description": "Category (admin, emergency, app_update)" },
+        "priority": { "type": "string", "description": "Priority level (CRITICAL, APP_UPDATE, NORMAL)" },
+        "senderDeviceId": { "type": "string", "description": "Originating device ID" },
+        "senderName": { "type": "string", "description": "Sender staff name" },
+        "senderRole": { "type": "string", "description": "Sender staff role" },
+        "forceAlert": { "type": "boolean", "description": "Force heads-up alert" },
+        "createdAt": { "type": "integer", "description": "Created epoch millis" }
+      },
+      "required": ["title", "body"]
+    },
+    "Broadcast": {
+      "title": "Broadcast",
+      "description": "Hospital emergency code or system broadcast",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Broadcast unique ID" },
+        "title": { "type": "string", "description": "Broadcast title" },
+        "body": { "type": "string", "description": "Broadcast body" },
+        "time": { "type": "string", "description": "Time string" },
+        "audience": { "type": "string", "description": "Target audience" },
+        "read": { "type": "boolean", "description": "Read status" },
+        "kind": { "type": "string", "description": "Broadcast category" },
+        "priority": { "type": "string", "description": "Broadcast priority" },
+        "senderDeviceId": { "type": "string", "description": "Device origin" },
+        "senderName": { "type": "string", "description": "Sender name" },
+        "senderRole": { "type": "string", "description": "Sender role" },
+        "forceAlert": { "type": "boolean", "description": "Force alert flag" },
+        "createdAt": { "type": "integer", "description": "Created epoch timestamp" }
+      },
+      "required": ["title", "body"]
+    },
+    "CarePlan": {
+      "title": "CarePlan",
+      "description": "Clinical care plan or checklist item",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string", "description": "Patient ID" },
+        "title": { "type": "string", "description": "Care task description" },
+        "due": { "type": "string", "description": "Due time or date" },
+        "status": { "type": "string", "description": "Status (pending, completed)" },
+        "lastUpdated": { "type": "integer", "description": "Last updated epoch millis" }
+      },
+      "required": ["patientId", "title", "status"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Daily staff attendance record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Staff user ID" },
+        "date": { "type": "string", "description": "Date (YYYY-MM-DD)" },
+        "time": { "type": "string", "description": "Check-in time (HH:mm)" },
+        "method": { "type": "string", "description": "Biometric or manual" },
+        "timestamp": { "type": "integer", "description": "Epoch timestamp" }
+      },
+      "required": ["userId", "date", "time"]
+    }
+  },
+  "firestore": {
+    "/hospital_patients/{patientId}": {
+      "schema": "Patient",
+      "description": "Admitted patients directory"
+    },
+    "/hospital_notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Real-time hospital alerts and notifications"
+    },
+    "/hospital_broadcasts/{broadcastId}": {
+      "schema": "Broadcast",
+      "description": "Hospital emergency codes and app updates"
+    },
+    "/hospital_care_plans/{planId}": {
+      "schema": "CarePlan",
+      "description": "Patient daily care plans and clinical checklists"
+    },
+    "/hospital_attendance/{attendanceId}": {
+      "schema": "Attendance",
+      "description": "Staff biometric and daily attendance records"
+    }
+  }
+}

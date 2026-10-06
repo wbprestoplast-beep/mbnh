@@ -1,4 +1,23 @@
 {
+  "firestore": [
+    {
+      "database": "ai-studio-android-mbnursin-fd9ce470-c0d4-4daf-ad31-9ab650ee0c09",
+      "rules": "firestore.rules"
+    }
+  ],
+  "emulators": {
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8085
+    },
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9099
+    },
+    "ui": {
+      "enabled": false
+    }
+  },
   "hosting": {
     "public": "web",
     "ignore": [

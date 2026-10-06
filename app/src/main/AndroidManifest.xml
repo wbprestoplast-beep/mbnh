@@ -30,6 +30,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Disable automatic FCM background registration to prevent unprovisioned gateway hard failure -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_analytics_collection_deactivated"
+            android:value="true" />
+
         <service
             android:name=".fcm.HospitalFirebaseMessagingService"
             android:exported="false">

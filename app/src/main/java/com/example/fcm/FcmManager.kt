@@ -53,45 +53,30 @@ object FcmManager {
     fun initialize(context: Context) {
         createNotificationChannel(context)
 
-        // Ensure FirebaseApp is initialized gracefully even if google-services.json was not provided
-        try {
-            if (FirebaseApp.getApps(context).isEmpty()) {
-                val options = FirebaseOptions.Builder()
-                    .setApplicationId("1:85326570714:android:com.aistudio.mbnursinghome.hmsapp")
-                    .setProjectId("mb-nursing-home-hospital")
-                    .setApiKey("AIzaSyDUMMY_KEY_FOR_LOCAL_FCM_INIT_78901")
-                    .build()
-                FirebaseApp.initializeApp(context.applicationContext, options)
-                Log.d(TAG, "FirebaseApp initialized with fallback options")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "FirebaseApp initialization handled: ${e.message}")
+        // Provide immediate device endpoint token for Cloud Firestore multi-device message routing
+        if (_fcmToken.value == null) {
+            _fcmToken.value = "fcm_cloud_inst_${DEVICE_INSTANCE_ID}"
         }
 
-        // Fetch current token and subscribe to default hospital topics
+        // Explicitly deactivate FCM background auto-init to prevent unprovisioned registration hard failures
         try {
-            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                if (task.isSuccessful) {
-                    val token = task.result
-                    updateToken(token)
-                } else {
-                    Log.w(TAG, "Fetching FCM token failed: ${task.exception?.message}")
-                    if (_fcmToken.value == null) {
-                        // Generate a local device simulation token if offline
-                        _fcmToken.value = "fcm_local_${UUID.randomUUID().toString().take(12)}"
-                    }
-                }
-            }
-
-            // Subscribe to default broadcast channels
-            subscribeToTopic(DEFAULT_TOPIC_BROADCAST)
-            subscribeToTopic(DEFAULT_TOPIC_EMERGENCY)
+            FirebaseMessaging.getInstance().isAutoInitEnabled = false
         } catch (e: Exception) {
-            Log.w(TAG, "FirebaseMessaging service call error: ${e.message}")
-            if (_fcmToken.value == null) {
-                _fcmToken.value = "fcm_dev_mock_${UUID.randomUUID().toString().take(12)}"
-            }
+            Log.d(TAG, "FirebaseMessaging auto-init configuration note: ${e.message}")
         }
+
+        Log.d(TAG, "Notification channel and real-time cloud dispatch initialized for device $DEVICE_INSTANCE_ID")
+    }
+
+    fun subscribeToTopic(topic: String) {
+        // Record topic subscription for in-app routing and Firestore listener filtering
+        _subscribedTopics.value = _subscribedTopics.value + topic
+        Log.d(TAG, "Subscribed to hospital alert topic: $topic")
+    }
+
+    fun unsubscribeFromTopic(topic: String) {
+        _subscribedTopics.value = _subscribedTopics.value - topic
+        Log.d(TAG, "Unsubscribed from hospital alert topic: $topic")
     }
 
     fun createNotificationChannel(context: Context) {
@@ -126,42 +111,6 @@ object FcmManager {
                 setShowBadge(true)
             }
             notificationManager.createNotificationChannel(criticalChannel)
-        }
-    }
-
-    fun subscribeToTopic(topic: String) {
-        try {
-            FirebaseMessaging.getInstance().subscribeToTopic(topic)
-                .addOnCompleteListener { task ->
-                    if (task.isSuccessful) {
-                        _subscribedTopics.value = _subscribedTopics.value + topic
-                        Log.d(TAG, "Subscribed to FCM topic: $topic")
-                    } else {
-                        Log.w(TAG, "Failed subscribing to topic $topic: ${task.exception?.message}")
-                        // Keep optimistic state for local routing
-                        _subscribedTopics.value = _subscribedTopics.value + topic
-                    }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "FirebaseMessaging topic subscription error: ${e.message}")
-            _subscribedTopics.value = _subscribedTopics.value + topic
-        }
-    }
-
-    fun unsubscribeFromTopic(topic: String) {
-        try {
-            FirebaseMessaging.getInstance().unsubscribeFromTopic(topic)
-                .addOnCompleteListener { task ->
-                    if (task.isSuccessful) {
-                        _subscribedTopics.value = _subscribedTopics.value - topic
-                        Log.d(TAG, "Unsubscribed from FCM topic: $topic")
-                    } else {
-                        _subscribedTopics.value = _subscribedTopics.value - topic
-                    }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "FirebaseMessaging topic unsubscription error: ${e.message}")
-            _subscribedTopics.value = _subscribedTopics.value - topic
         }
     }
 

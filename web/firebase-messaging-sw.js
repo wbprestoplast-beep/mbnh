@@ -6,10 +6,10 @@ importScripts('https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging-com
 
 // Initialize Firebase within the Service Worker context
 const firebaseConfig = {
-  apiKey: "AIzaSyDUMMY_KEY_FOR_LOCAL_FCM_INIT_78901",
-  projectId: "mb-nursing-home-hospital",
-  messagingSenderId: "85326570714",
-  appId: "1:85326570714:web:mbnursinghomewebapp"
+  apiKey: "AIzaSyAdOGC8fGBbEe49IFqU2HDdY1aGJs5Q5Jw",
+  projectId: "gen-lang-client-0110759247",
+  messagingSenderId: "300073810040",
+  appId: "1:300073810040:android:1cd9173356655572c1d58d"
 };
 
 try {

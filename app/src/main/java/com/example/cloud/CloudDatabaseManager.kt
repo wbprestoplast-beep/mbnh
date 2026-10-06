@@ -67,7 +67,17 @@ object CloudDatabaseManager {
         if (firestoreInstance != null) return firestoreInstance
         return try {
             FcmManager.initialize(context)
-            val db = FirebaseFirestore.getInstance()
+            val dbId = try {
+                context.getString(com.example.R.string.firestore_database_id)
+            } catch (_: Exception) {
+                null
+            }
+            val db = if (!dbId.isNullOrBlank()) {
+                val app = FirebaseApp.getInstance()
+                FirebaseFirestore.getInstance(app, dbId)
+            } else {
+                FirebaseFirestore.getInstance()
+            }
             try {
                 val settings = FirebaseFirestoreSettings.Builder()
                     .setPersistenceEnabled(true)
