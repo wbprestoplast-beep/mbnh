@@ -1,0 +1,18 @@
+{
+  "name": "MB Nursing Home — Hospital Management System",
+  "short_name": "MB Hospital",
+  "description": "Hospital Management System for MB Nursing Home Pvt. Ltd. with real-time cloud database and background push notifications.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B1220",
+  "theme_color": "#0E7490",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
