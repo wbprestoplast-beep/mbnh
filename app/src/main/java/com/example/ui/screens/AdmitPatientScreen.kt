@@ -57,8 +57,13 @@ fun AdmitPatientScreen(viewModel: HospitalViewModel) {
     val currentUser by viewModel.currentUser.collectAsState()
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "NURSE")
-    val isDoctor = userRole == UserRole.DOCTOR
-    val doctors = users.filter { it.role.equals("DOCTOR", ignoreCase = true) }
+    val isDoctor = userRole == UserRole.DOCTOR || userRole == UserRole.RMO || userRole == UserRole.MEDICAL_SUPER || userRole == UserRole.RMO_INCHARGE
+    val doctors = users.filter {
+        it.role.equals("DOCTOR", ignoreCase = true) ||
+        it.role.equals("RMO", ignoreCase = true) ||
+        it.role.equals("MEDICAL_SUPER", ignoreCase = true) ||
+        it.role.equals("RMO_INCHARGE", ignoreCase = true)
+    }
 
     // Find all free beds
     val occupiedBedIds = patients.map { it.bed }.toSet()

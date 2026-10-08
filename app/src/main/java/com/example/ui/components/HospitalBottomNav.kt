@@ -54,7 +54,7 @@ fun HospitalBottomNav(
             NavTabItem(AppScreen.ATTENDANCE, "Attendance", Icons.Filled.Fingerprint, Icons.Outlined.Fingerprint),
             NavTabItem(AppScreen.PLANNINGS, "Plannings", Icons.Filled.CalendarMonth, Icons.Outlined.CalendarMonth)
         )
-        UserRole.DOCTOR -> listOf(
+        UserRole.DOCTOR, UserRole.RMO, UserRole.MEDICAL_SUPER, UserRole.RMO_INCHARGE -> listOf(
             NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
             NavTabItem(AppScreen.PATIENTS, "Patients", Icons.Filled.People, Icons.Outlined.People),
             NavTabItem(AppScreen.BEDS, "Beds", Icons.Filled.Hotel, Icons.Outlined.Hotel),

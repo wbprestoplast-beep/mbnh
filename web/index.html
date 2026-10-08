@@ -597,6 +597,34 @@
     }
 
     renderBeds(defaultBeds);
+
+    // Live Patient Admissions & Bed Synchronization
+    if (db) {
+      try {
+        db.collection('hospital_patients').onSnapshot((snapshot) => {
+          if (!snapshot.empty) {
+            const patientMap = {};
+            snapshot.forEach(doc => {
+              const data = doc.data();
+              if (data.bed) {
+                patientMap[data.bed] = data.name;
+              }
+            });
+            const updatedBeds = defaultBeds.map(bed => {
+              if (patientMap[bed.code]) {
+                return { ...bed, occupied: true, patient: patientMap[bed.code] };
+              }
+              return bed;
+            });
+            renderBeds(updatedBeds);
+          }
+        }, (err) => {
+          console.warn('Patients snapshot stream fallback:', err);
+        });
+      } catch (e) {
+        console.warn('Patients listener:', e);
+      }
+    }
   </script>
 </body>
 </html>

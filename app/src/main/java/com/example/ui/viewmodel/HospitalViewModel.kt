@@ -287,18 +287,19 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             addedBy = currentUser.value?.id ?: "STAFF"
         )
         val pt = patients.value.firstOrNull { it.id == patientId }
+        val docNotif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = "Document uploaded",
+            body = "$category added to ${pt?.name ?: patientId}'s record by ${currentUser.value?.name ?: "Staff"}.",
+            time = currentTime,
+            audience = pt?.doctorId ?: "all",
+            kind = "doc"
+        )
         viewModelScope.launch {
             repository.insertDocument(doc)
-            repository.insertNotification(
-                NotificationEntity(
-                    id = "nt_" + UUID.randomUUID().toString().take(8),
-                    title = "Document uploaded",
-                    body = "$category added to ${pt?.name ?: patientId}'s record by ${currentUser.value?.name ?: "Staff"}.",
-                    time = currentTime,
-                    audience = pt?.doctorId ?: "all",
-                    kind = "doc"
-                )
-            )
+            repository.insertNotification(docNotif)
+            com.example.cloud.CloudDatabaseManager.syncDocumentToCloud(getApplication(), doc)
+            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), docNotif)
             showToast("📄 Document saved to patient record")
             closeScanner()
         }
@@ -310,11 +311,23 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             id = "note_" + UUID.randomUUID().toString().take(8),
             patientId = patientId,
             text = text.trim(),
-            authorId = currentUser.value?.id ?: "DOC",
+            authorId = currentUser.value?.name ?: currentUser.value?.id ?: "DOC",
             date = todayDate
+        )
+        val pt = patients.value.firstOrNull { it.id == patientId }
+        val noteNotif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = "Clinical Note Added",
+            body = "Dr. ${currentUser.value?.name ?: "Doctor"} added note for ${pt?.name ?: patientId}.",
+            time = currentTime,
+            audience = pt?.doctorId ?: "all",
+            kind = "doc"
         )
         viewModelScope.launch {
             repository.insertClinicalNote(note)
+            repository.insertNotification(noteNotif)
+            com.example.cloud.CloudDatabaseManager.syncClinicalNoteToCloud(getApplication(), note)
+            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), noteNotif)
             showToast("Clinical note saved")
         }
     }
@@ -427,12 +440,14 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
         title: String,
         body: String,
         priority: BroadcastPriority = BroadcastPriority.NORMAL,
-        targetAudience: String = "all"
+        targetAudience: String = "all",
+        voiceNoteBase64: String? = null,
+        voiceDurationSec: Int = 0
     ) {
-        if (title.isBlank() || body.isBlank()) return
+        if (title.isBlank() && voiceNoteBase64 == null) return
         val user = currentUser.value
-        val cleanTitle = title.trim()
-        val cleanBody = body.trim()
+        val cleanTitle = if (title.isNotBlank()) title.trim() else "🎙️ Voice Announcement (${voiceDurationSec}s)"
+        val cleanBody = if (body.isNotBlank()) body.trim() else "Voice message attached from ${user?.name ?: "Staff"}"
         val broadcast = HospitalBroadcast(
             id = "bc_" + UUID.randomUUID().toString().take(8),
             title = cleanTitle,
@@ -442,7 +457,9 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             senderRole = user?.role ?: "Admin",
             time = currentTime,
             audience = targetAudience,
-            timestamp = System.currentTimeMillis()
+            timestamp = System.currentTimeMillis(),
+            voiceNoteBase64 = voiceNoteBase64,
+            voiceDurationSec = voiceDurationSec
         )
         viewModelScope.launch {
             val notif = NotificationEntity(
@@ -485,16 +502,28 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
     fun syncAllLocalDataToCloud() {
         val app = getApplication<android.app.Application>()
         viewModelScope.launch {
+            users.value.forEach { u ->
+                com.example.cloud.CloudDatabaseManager.syncUserToCloud(app, u)
+            }
             patients.value.forEach { pt ->
                 com.example.cloud.CloudDatabaseManager.syncPatientToCloud(app, pt)
+            }
+            documents.value.forEach { doc ->
+                com.example.cloud.CloudDatabaseManager.syncDocumentToCloud(app, doc)
+            }
+            clinicalNotes.value.forEach { note ->
+                com.example.cloud.CloudDatabaseManager.syncClinicalNoteToCloud(app, note)
             }
             carePlans.value.forEach { plan ->
                 com.example.cloud.CloudDatabaseManager.syncCarePlanToCloud(app, plan)
             }
+            attendance.value.forEach { att ->
+                com.example.cloud.CloudDatabaseManager.syncAttendanceToCloud(app, att)
+            }
             notifications.value.forEach { notif ->
                 com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(app, notif)
             }
-            showToast("☁️ Local database synchronized with Cloud Firestore")
+            showToast("☁️ Full hospital database synchronized with Cloud Firestore")
         }
     }
 
@@ -516,7 +545,8 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
         phone: String,
         email: String,
         photoUri: String?,
-        pass: String
+        pass: String,
+        customId: String? = null
     ) {
         val prefix = role.prefix
         val existingNums = users.value
@@ -525,15 +555,25 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
         val nextNum = if (existingNums.isNotEmpty()) existingNums.maxOrNull()!! + 1
         else when (role) {
             UserRole.DOCTOR -> 2001
+            UserRole.RMO -> 2101
+            UserRole.MEDICAL_SUPER -> 2201
+            UserRole.RMO_INCHARGE -> 2301
             UserRole.ADMINISTRATOR -> 1001
             UserRole.NURSE -> 3001
             UserRole.TECHNICIAN -> 3501
             else -> 4001
         }
-        val newId = "$prefix-${String.format(Locale.getDefault(), "%04d", nextNum)}"
+        val generatedId = "$prefix-${String.format(Locale.getDefault(), "%04d", nextNum)}"
+        val finalId = if (!customId.isNullOrBlank()) customId.trim().uppercase() else generatedId
+
+        if (users.value.any { it.id.equals(finalId, ignoreCase = true) }) {
+            showToast("⚠ User ID $finalId is already in use. Please specify another ID.")
+            return
+        }
+
         val newUser = UserEntity(
-            id = newId,
-            pass = pass,
+            id = finalId,
+            pass = pass.ifBlank { "12345" },
             name = name.trim(),
             role = role.name,
             dept = dept,
@@ -543,20 +583,148 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             photoUri = photoUri,
             joinedDate = todayDate
         )
+        val notif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = "New member registered",
+            body = "$name joined as ${role.label} · Login ID: $finalId",
+            time = currentTime,
+            audience = "all",
+            kind = "admin"
+        )
         viewModelScope.launch {
             repository.insertUser(newUser)
-            repository.insertNotification(
-                NotificationEntity(
-                    id = "nt_" + UUID.randomUUID().toString().take(8),
-                    title = "New member invited",
-                    body = "$name joined as ${role.label} · Login ID: $newId",
-                    time = currentTime,
-                    audience = "all",
-                    kind = "admin"
-                )
-            )
-            showToast("✉️ $name registered with ID $newId")
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.syncUserToCloud(getApplication(), newUser)
+            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), notif)
+            showToast("✉️ $name registered with ID $finalId")
         }
+    }
+
+    fun updateOwnProfile(newName: String, newPhone: String, newEmail: String = "") {
+        val current = _currentUser.value ?: return
+        if (newName.isBlank()) {
+            showToast("Name cannot be empty")
+            return
+        }
+        val updated = current.copy(
+            name = newName.trim(),
+            phone = newPhone.trim(),
+            email = newEmail.trim()
+        )
+        viewModelScope.launch {
+            repository.insertUser(updated)
+            _currentUser.value = updated
+            com.example.cloud.CloudDatabaseManager.syncUserToCloud(getApplication(), updated)
+            val notif = NotificationEntity(
+                id = "nt_" + UUID.randomUUID().toString().take(8),
+                title = "Profile updated",
+                body = "Name/contact details updated for ${updated.name} (${updated.id}).",
+                time = currentTime,
+                audience = updated.id,
+                kind = "admin"
+            )
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), notif)
+            showToast("✓ Profile updated successfully")
+        }
+    }
+
+    fun updateOwnPassword(currentPass: String, newPass: String): Boolean {
+        val current = _currentUser.value ?: return false
+        if (current.pass.isNotBlank() && currentPass != current.pass) {
+            showToast("⚠ Current password incorrect")
+            return false
+        }
+        if (newPass.trim().length < 3) {
+            showToast("⚠ Password must be at least 3 characters")
+            return false
+        }
+        val updated = current.copy(pass = newPass.trim())
+        viewModelScope.launch {
+            repository.insertUser(updated)
+            _currentUser.value = updated
+            com.example.cloud.CloudDatabaseManager.syncUserToCloud(getApplication(), updated)
+            val notif = NotificationEntity(
+                id = "nt_" + UUID.randomUUID().toString().take(8),
+                title = "Password changed",
+                body = "Your account password was updated successfully.",
+                time = currentTime,
+                audience = current.id,
+                kind = "admin"
+            )
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), notif)
+        }
+        showToast("✓ Password changed successfully")
+        return true
+    }
+
+    fun updateStaffByBoss(
+        oldId: String,
+        newId: String,
+        newName: String,
+        newRole: UserRole,
+        newDept: String,
+        newSpecialty: String,
+        newPhone: String,
+        newEmail: String,
+        newPass: String,
+        newPhotoUri: String?
+    ): Boolean {
+        val current = _currentUser.value
+        val isBoss = current?.role == "BOSS" || current?.id == "BOSS-0001"
+        if (!isBoss) {
+            showToast("⚠ Only Boss has permission to edit staff profiles and credentials")
+            return false
+        }
+
+        val cleanNewId = newId.trim().uppercase()
+        val existingStaff = users.value.firstOrNull { it.id == oldId } ?: return false
+
+        if (cleanNewId != oldId && users.value.any { it.id == cleanNewId }) {
+            showToast("⚠ User ID $cleanNewId is already assigned to another staff member")
+            return false
+        }
+
+        viewModelScope.launch {
+            if (cleanNewId != oldId) {
+                repository.deleteUser(oldId)
+                com.example.cloud.CloudDatabaseManager.deleteUserFromCloud(getApplication(), oldId)
+            }
+
+            val updatedUser = UserEntity(
+                id = cleanNewId,
+                pass = newPass.trim().ifBlank { "12345" },
+                name = newName.trim(),
+                role = newRole.name,
+                dept = newDept.trim(),
+                specialty = newSpecialty.trim(),
+                phone = newPhone.trim(),
+                email = newEmail.trim(),
+                photoUri = newPhotoUri ?: existingStaff.photoUri,
+                joinedDate = existingStaff.joinedDate
+            )
+
+            repository.insertUser(updatedUser)
+            com.example.cloud.CloudDatabaseManager.syncUserToCloud(getApplication(), updatedUser)
+
+            if (current.id == oldId) {
+                _currentUser.value = updatedUser
+            }
+
+            val notif = NotificationEntity(
+                id = "nt_" + UUID.randomUUID().toString().take(8),
+                title = "Staff profile & rights updated",
+                body = "Boss updated profile for $newName (ID: $cleanNewId · ${newRole.label}).",
+                time = currentTime,
+                audience = "all",
+                kind = "admin"
+            )
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), notif)
+        }
+        showToast("✓ Staff $newName ($cleanNewId) updated by Boss")
+        return true
     }
 
     fun deleteStaff(userId: String) {
@@ -566,6 +734,7 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             repository.deleteUser(userId)
+            com.example.cloud.CloudDatabaseManager.deleteUserFromCloud(getApplication(), userId)
             showToast("Staff member removed")
         }
     }
@@ -573,6 +742,10 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
     fun updateUserPhoto(userId: String, photoUri: String?) {
         viewModelScope.launch {
             repository.updateUserPhoto(userId, photoUri)
+            val updatedUser = repository.getUserById(userId)
+            if (updatedUser != null) {
+                com.example.cloud.CloudDatabaseManager.syncUserToCloud(getApplication(), updatedUser)
+            }
             if (_currentUser.value?.id == userId) {
                 _currentUser.value = _currentUser.value?.copy(photoUri = photoUri)
             }
@@ -588,6 +761,7 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             repository.deleteUser(user.id)
+            com.example.cloud.CloudDatabaseManager.deleteUserFromCloud(getApplication(), user.id)
             _currentUser.value = null
             _screenStack.value = listOf(AppScreen.HOME)
             showToast("Account deleted permanently")
@@ -597,6 +771,14 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
     fun markAllNotificationsRead() {
         viewModelScope.launch {
             repository.markAllNotificationsAsRead()
+        }
+    }
+
+    fun clearAllNotificationsAndUpdates() {
+        viewModelScope.launch {
+            repository.deleteAllNotifications()
+            com.example.cloud.CloudDatabaseManager.clearLatestBroadcast()
+            showToast("🧹 All notifications and updates cleared")
         }
     }
 }

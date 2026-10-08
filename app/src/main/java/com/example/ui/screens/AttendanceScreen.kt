@@ -62,7 +62,7 @@ fun AttendanceScreen(viewModel: HospitalViewModel) {
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "NURSE")
     val isBoss = userRole == UserRole.BOSS
-    val isDoctor = userRole == UserRole.DOCTOR
+    val isDoctor = userRole == UserRole.DOCTOR || userRole == UserRole.RMO || userRole == UserRole.MEDICAL_SUPER || userRole == UserRole.RMO_INCHARGE
 
     val todayRecords = attendanceList.filter { it.date == viewModel.todayDate }
     val myCheckIn = todayRecords.firstOrNull { it.userId == currentUser?.id }

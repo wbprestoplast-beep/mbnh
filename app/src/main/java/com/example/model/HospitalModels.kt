@@ -3,6 +3,9 @@ package com.example.model
 enum class UserRole(val label: String, val prefix: String, val colorHex: Long) {
     BOSS("Boss", "BOSS", 0xFFD97706),
     DOCTOR("Doctor", "DOC", 0xFF0E7490),
+    RMO("RMO", "RMO", 0xFF0891B2),
+    MEDICAL_SUPER("Medical Super", "MSU", 0xFF059669),
+    RMO_INCHARGE("RMO Incharge", "RMI", 0xFF0284C7),
     NURSE("Nurse", "NUR", 0xFF7C3AED),
     TECHNICIAN("Technician", "TEC", 0xFF0369A1),
     ADMINISTRATOR("Administrator", "ADM", 0xFFB45309),
@@ -77,14 +80,35 @@ data class HospitalBroadcast(
     val senderRole: String,
     val time: String,
     val audience: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val voiceNoteBase64: String? = null,
+    val voiceDurationSec: Int = 0
 )
 
 object HospitalConstants {
     val WARDS = listOf(
-        WardInfo("General Ward", listOf("G-101", "G-102", "G-103", "G-104", "G-105", "G-106", "G-107", "G-108")),
-        WardInfo("ICU", listOf("I-201", "I-202", "I-203", "I-204", "I-205", "I-206")),
-        WardInfo("Private Cabins", listOf("C-301", "C-302", "C-303", "C-304"))
+        WardInfo(
+            "ICU",
+            (101..108).map { "$it" }
+        ),
+        WardInfo(
+            "Male Ward",
+            (201..211).map { "$it" }
+        ),
+        WardInfo(
+            "Female Ward",
+            (212..224).map { "$it" }
+        ),
+        WardInfo(
+            "3rd Floor",
+            listOf(
+                "301", "302A", "302B", "302C", "302D",
+                "303", "304", "305", "306",
+                "307A", "307B", "308",
+                "309A", "309B", "309C",
+                "310A", "310B"
+            )
+        )
     )
 
     val SPECIALTIES = listOf(

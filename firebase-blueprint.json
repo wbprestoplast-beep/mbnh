@@ -1,5 +1,25 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "description": "Hospital staff member, doctor, nurse, or administrator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique staff ID (e.g. DOC-0001, NUR-0001, ADM-0001)" },
+        "name": { "type": "string", "description": "Full staff name" },
+        "role": { "type": "string", "description": "Staff role key" },
+        "department": { "type": "string", "description": "Hospital department" },
+        "specialty": { "type": "string", "description": "Medical specialty" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "email": { "type": "string", "description": "Email address" },
+        "pass": { "type": "string", "description": "Hashed or default access passcode" },
+        "status": { "type": "string", "description": "Current status (On-duty, Off-duty, In-Surgery)" },
+        "shift": { "type": "string", "description": "Shift schedule (Morning, Evening, Night)" },
+        "joiningDate": { "type": "string", "description": "Joining date string" },
+        "lastUpdated": { "type": "integer", "description": "Last update epoch millis" }
+      },
+      "required": ["id", "name", "role"]
+    },
     "Patient": {
       "title": "Patient",
       "description": "Patient admission record at MB Nursing Home",
@@ -21,6 +41,42 @@
         "lastUpdated": { "type": "integer", "description": "Last update epoch millis" }
       },
       "required": ["name", "age", "ward", "bed", "doctorId"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "Medical document, lab report, prescription, or scan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document unique ID" },
+        "patientId": { "type": "string", "description": "Associated patient ID" },
+        "patientName": { "type": "string", "description": "Patient full name" },
+        "category": { "type": "string", "description": "Document category" },
+        "title": { "type": "string", "description": "Document title" },
+        "timestamp": { "type": "string", "description": "Formatted date timestamp" },
+        "previewBase64": { "type": "string", "description": "Thumbnail or scanned preview Base64" },
+        "fullImageBase64": { "type": "string", "description": "Full document image Base64" },
+        "extractedText": { "type": "string", "description": "OCR extracted text or clinical notes" },
+        "notes": { "type": "string", "description": "Staff or physician notes" },
+        "doctorName": { "type": "string", "description": "Ordering or uploading physician" },
+        "filterApplied": { "type": "string", "description": "Image enhancement filter" },
+        "isSynced": { "type": "boolean", "description": "Cloud synchronization status" },
+        "createdAt": { "type": "integer", "description": "Created epoch timestamp" }
+      },
+      "required": ["patientId", "category", "title"]
+    },
+    "ClinicalNote": {
+      "title": "ClinicalNote",
+      "description": "Physician clinical observations and progress notes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Clinical note ID" },
+        "patientId": { "type": "string", "description": "Patient ID" },
+        "doctorName": { "type": "string", "description": "Attending doctor name" },
+        "note": { "type": "string", "description": "Clinical observation text" },
+        "date": { "type": "string", "description": "Date of entry" },
+        "timestamp": { "type": "integer", "description": "Epoch timestamp" }
+      },
+      "required": ["patientId", "note"]
     },
     "Notification": {
       "title": "Notification",
@@ -92,9 +148,21 @@
     }
   },
   "firestore": {
+    "/hospital_users/{userId}": {
+      "schema": "User",
+      "description": "Staff, doctors, nurses, and administrator profiles"
+    },
     "/hospital_patients/{patientId}": {
       "schema": "Patient",
       "description": "Admitted patients directory"
+    },
+    "/hospital_documents/{documentId}": {
+      "schema": "Document",
+      "description": "Medical scans, prescriptions, and lab reports"
+    },
+    "/hospital_clinical_notes/{noteId}": {
+      "schema": "ClinicalNote",
+      "description": "Doctor progress notes and clinical observations"
     },
     "/hospital_notifications/{notificationId}": {
       "schema": "Notification",

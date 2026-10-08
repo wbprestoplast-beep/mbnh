@@ -54,7 +54,7 @@ fun PlanningsScreen(viewModel: HospitalViewModel) {
     val carePlans by viewModel.carePlans.collectAsState()
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "NURSE")
-    val isDoctor = userRole == UserRole.DOCTOR
+    val isDoctor = userRole == UserRole.DOCTOR || userRole == UserRole.RMO || userRole == UserRole.MEDICAL_SUPER || userRole == UserRole.RMO_INCHARGE
 
     var selectedFilter by remember { mutableStateOf("pending") } // pending, today, done, all
 

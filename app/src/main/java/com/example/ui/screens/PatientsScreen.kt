@@ -64,7 +64,7 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
     val documents by viewModel.documents.collectAsState()
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "NURSE")
-    val isDoctor = userRole == UserRole.DOCTOR
+    val isDoctor = userRole == UserRole.DOCTOR || userRole == UserRole.RMO || userRole == UserRole.MEDICAL_SUPER || userRole == UserRole.RMO_INCHARGE
     val isBoss = userRole == UserRole.BOSS
     val isClinical = listOf(UserRole.NURSE, UserRole.TECHNICIAN, UserRole.INCHARGE).contains(userRole)
 
@@ -72,7 +72,12 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
     var doctorTab by remember { mutableStateOf("mine") } // "mine" or "referred"
     var selectedDoctorFilter by remember { mutableStateOf("all") }
 
-    val doctors = users.filter { it.role.equals("DOCTOR", ignoreCase = true) }
+    val doctors = users.filter {
+        it.role.equals("DOCTOR", ignoreCase = true) ||
+        it.role.equals("RMO", ignoreCase = true) ||
+        it.role.equals("MEDICAL_SUPER", ignoreCase = true) ||
+        it.role.equals("RMO_INCHARGE", ignoreCase = true)
+    }
 
     val filteredPatients = patients.filter { patient ->
         val assignedDoctor = users.firstOrNull { it.id == patient.doctorId }

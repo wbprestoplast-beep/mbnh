@@ -76,7 +76,7 @@ fun HomeScreen(viewModel: HospitalViewModel) {
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "NURSE")
     val isBoss = userRole == UserRole.BOSS
-    val isDoctor = userRole == UserRole.DOCTOR
+    val isDoctor = userRole == UserRole.DOCTOR || userRole == UserRole.RMO || userRole == UserRole.MEDICAL_SUPER || userRole == UserRole.RMO_INCHARGE
     val isStaffAdmin = isBoss || userRole == UserRole.ADMINISTRATOR
     val isClinical = listOf(UserRole.NURSE, UserRole.TECHNICIAN, UserRole.INCHARGE).contains(userRole)
 

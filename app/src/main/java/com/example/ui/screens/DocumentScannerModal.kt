@@ -1,10 +1,15 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -91,13 +96,27 @@ fun DocumentScannerModal(viewModel: HospitalViewModel) {
     var isPatientMenuExpanded by remember { mutableStateOf(false) }
     var isCategoryMenuExpanded by remember { mutableStateOf(false) }
 
-    // Camera launcher
-    val cameraLauncher = rememberLauncherForActivityResult(
+    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var tempPhotoFile by remember { mutableStateOf<File?>(null) }
+
+    // Full-resolution camera capture contract
+    val takePictureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success: Boolean ->
+        if (success && tempPhotoFile != null && tempPhotoFile!!.exists()) {
+            capturedUriString = tempPhotoFile!!.absolutePath
+            try {
+                capturedBitmap = BitmapFactory.decodeFile(tempPhotoFile!!.absolutePath)
+            } catch (_: Exception) {}
+        }
+    }
+
+    // Camera launcher fallback (preview)
+    val cameraPreviewLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap: Bitmap? ->
         if (bitmap != null) {
             capturedBitmap = bitmap
-            // save bitmap or use temporary representation
             try {
                 val tempFile = File.createTempFile("scan_", ".jpg", context.cacheDir)
                 tempFile.outputStream().use { out ->
@@ -105,6 +124,44 @@ fun DocumentScannerModal(viewModel: HospitalViewModel) {
                 }
                 capturedUriString = tempFile.absolutePath
             } catch (_: Exception) {}
+        }
+    }
+
+    fun launchCameraDirectly() {
+        try {
+            val file = File.createTempFile("med_doc_", ".jpg", context.cacheDir)
+            tempPhotoFile = file
+            val authority = "${context.packageName}.provider"
+            val uri = FileProvider.getUriForFile(context, authority, file)
+            tempPhotoUri = uri
+            takePictureLauncher.launch(uri)
+        } catch (e: Exception) {
+            // Fallback to preview contract if FileProvider or intent creation fails
+            try {
+                cameraPreviewLauncher.launch(null)
+            } catch (e2: Exception) {
+                Toast.makeText(context, "Camera unavailable on this device: ${e2.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Runtime permission launcher
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            launchCameraDirectly()
+        } else {
+            Toast.makeText(context, "Camera permission is required to scan reports", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun onCameraClick() {
+        val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        if (hasPerm) {
+            launchCameraDirectly()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
@@ -155,7 +212,7 @@ fun DocumentScannerModal(viewModel: HospitalViewModel) {
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Button(
-                            onClick = { cameraLauncher.launch(null) },
+                            onClick = { onCameraClick() },
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
                             contentPadding = PaddingValues(vertical = 20.dp, horizontal = 12.dp),

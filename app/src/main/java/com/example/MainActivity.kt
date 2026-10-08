@@ -52,8 +52,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Initialize Firebase Cloud Messaging & Notification channels
+        // Initialize Notification channels & background cloud synchronization service
         FcmManager.initialize(applicationContext)
+        com.example.service.HospitalSyncService.start(applicationContext)
 
         setContent {
             val viewModel: HospitalViewModel = viewModel()

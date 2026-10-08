@@ -98,7 +98,7 @@ fun PatientDetailScreen(
     val patientPlans = carePlans.filter { it.patientId == patient.id }
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "NURSE")
-    val isDoctor = userRole == UserRole.DOCTOR
+    val isDoctor = userRole == UserRole.DOCTOR || userRole == UserRole.RMO || userRole == UserRole.MEDICAL_SUPER || userRole == UserRole.RMO_INCHARGE
     val isBoss = userRole == UserRole.BOSS
     val canEdit = isBoss || isDoctor || listOf(UserRole.NURSE, UserRole.TECHNICIAN, UserRole.INCHARGE, UserRole.ADMINISTRATOR).contains(userRole)
 

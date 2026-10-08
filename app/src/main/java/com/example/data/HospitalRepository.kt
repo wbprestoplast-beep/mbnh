@@ -85,4 +85,8 @@ class HospitalRepository(private val dao: HospitalDao) {
     suspend fun markAllNotificationsAsRead() = withContext(Dispatchers.IO) {
         dao.markAllNotificationsAsRead()
     }
+
+    suspend fun deleteAllNotifications() = withContext(Dispatchers.IO) {
+        dao.deleteAllNotifications()
+    }
 }

@@ -24,13 +24,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,6 +51,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.util.Base64
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.DisposableEffect
+import java.io.File
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -88,6 +107,140 @@ fun NotificationsScreen(viewModel: HospitalViewModel) {
     var selectedPriority by remember { mutableStateOf(com.example.model.BroadcastPriority.NORMAL) }
     var selectedAudience by remember { mutableStateOf("all") }
 
+    val context = LocalContext.current
+    var isRecordingVoice by remember { mutableStateOf(false) }
+    var voiceRecordDurationSec by remember { mutableStateOf(0) }
+    var recordedVoiceBase64 by remember { mutableStateOf<String?>(null) }
+    var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var voiceTempFile by remember { mutableStateOf<File?>(null) }
+
+    var isPlayingVoicePreview by remember { mutableStateOf(false) }
+    var voicePlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    var currentlyPlayingNotifId by remember { mutableStateOf<String?>(null) }
+
+    // Clean up audio player and recorder on disposal
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                mediaRecorder?.release()
+                voicePlayer?.release()
+            } catch (_: Exception) {}
+        }
+    }
+
+    // Voice record duration timer
+    LaunchedEffect(isRecordingVoice) {
+        if (isRecordingVoice) {
+            voiceRecordDurationSec = 0
+            while (isRecordingVoice) {
+                kotlinx.coroutines.delay(1000L)
+                voiceRecordDurationSec += 1
+                if (voiceRecordDurationSec >= 60) {
+                    // Max 60 seconds voice message
+                    break
+                }
+            }
+        }
+    }
+
+    fun startRecordingVoice() {
+        try {
+            val file = File.createTempFile("voice_broadcast_", ".m4a", context.cacheDir)
+            voiceTempFile = file
+            val recorder = MediaRecorder().apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setOutputFile(file.absolutePath)
+                prepare()
+                start()
+            }
+            mediaRecorder = recorder
+            isRecordingVoice = true
+            Toast.makeText(context, "🎙️ Recording broadcast audio...", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(context, "Microphone unavailable: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            isRecordingVoice = false
+        }
+    }
+
+    fun stopRecordingVoice() {
+        try {
+            mediaRecorder?.stop()
+            mediaRecorder?.release()
+            mediaRecorder = null
+            isRecordingVoice = false
+
+            val file = voiceTempFile
+            if (file != null && file.exists() && file.length() > 0) {
+                val bytes = file.readBytes()
+                recordedVoiceBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                Toast.makeText(context, "✅ Voice message recorded (${voiceRecordDurationSec}s)", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            isRecordingVoice = false
+            Toast.makeText(context, "Audio encoding note: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            startRecordingVoice()
+        } else {
+            Toast.makeText(context, "Microphone permission required for voice announcements", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun toggleVoiceRecording() {
+        if (isRecordingVoice) {
+            stopRecordingVoice()
+        } else {
+            val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (hasPerm) {
+                startRecordingVoice()
+            } else {
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+
+    fun playVoiceAudio(base64Data: String, notifId: String) {
+        try {
+            if (currentlyPlayingNotifId == notifId && isPlayingVoicePreview) {
+                voicePlayer?.stop()
+                voicePlayer?.release()
+                voicePlayer = null
+                isPlayingVoicePreview = false
+                currentlyPlayingNotifId = null
+                return
+            }
+
+            voicePlayer?.release()
+            val decoded = Base64.decode(base64Data, Base64.DEFAULT)
+            val tempFile = File.createTempFile("play_voice_", ".m4a", context.cacheDir)
+            tempFile.writeBytes(decoded)
+
+            val player = MediaPlayer().apply {
+                setDataSource(tempFile.absolutePath)
+                prepare()
+                start()
+                setOnCompletionListener {
+                    isPlayingVoicePreview = false
+                    currentlyPlayingNotifId = null
+                }
+            }
+            voicePlayer = player
+            isPlayingVoicePreview = true
+            currentlyPlayingNotifId = notifId
+        } catch (e: Exception) {
+            Toast.makeText(context, "Audio playback error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            isPlayingVoicePreview = false
+            currentlyPlayingNotifId = null
+        }
+    }
+
     val presetTemplates = listOf(
         Triple("🚨 Code Blue — ICU Ward", "Emergency Resuscitation Team needed immediately at ICU Bed 201.", com.example.model.BroadcastPriority.CRITICAL),
         Triple("🚀 App & System Update v2.5", "Real-time multi-phone cloud sync & instant notification dispatches active across all hospital devices.", com.example.model.BroadcastPriority.APP_UPDATE),
@@ -111,299 +264,6 @@ fun NotificationsScreen(viewModel: HospitalViewModel) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // FCM Cloud Messaging Status Card
-        item {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("fcm_status_card")
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MedGreen.copy(alpha = 0.15f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CloudDone,
-                                    contentDescription = null,
-                                    tint = MedGreen,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    text = "Firebase Cloud Messaging",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(7.dp)
-                                            .clip(CircleShape)
-                                            .background(MedGreen)
-                                    )
-                                    Text(
-                                        text = "Active & Receiving Broadcasts",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MedGreen
-                                    )
-                                }
-                            }
-                        }
-
-                        // Test push simulation button
-                        OutlinedButton(
-                            onClick = {
-                                viewModel.simulateIncomingFcmPush(
-                                    title = "🚨 Emergency Broadcast — ICU Ward",
-                                    body = "Patient vital drop reported at Bed I-201. On-duty doctor and emergency nurse team notified."
-                                )
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(34.dp)
-                        ) {
-                            Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Test FCM Push", fontSize = 11.sp)
-                        }
-                    }
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 12.dp),
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                    )
-
-                    // Device Registration Token row
-                    Text(
-                        text = "FCM DEVICE REGISTRATION TOKEN",
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = fcmToken ?: "Fetching registration token...",
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            maxLines = 1,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        IconButton(
-                            onClick = {
-                                fcmToken?.let { token ->
-                                    clipboardManager.setText(AnnotatedString(token))
-                                    viewModel.showToast("Copied FCM token to clipboard")
-                                }
-                            },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy Token",
-                                tint = BrandTeal,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Subscribed Topics tags
-                    Text(
-                        text = "SUBSCRIBED FCM TOPICS",
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        subscribedTopics.forEach { topic ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(BrandCyan.copy(alpha = 0.12f))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = "#$topic",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = BrandTeal
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Shared Cloud Database (Firestore) & Web Service Worker Card
-        item {
-            val isCloudConnected by viewModel.isCloudConnected.collectAsState()
-            val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
-            val lastCloudSyncTime by viewModel.lastCloudSyncTime.collectAsState()
-
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("shared_cloud_database_card")
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(BrandTeal.copy(alpha = 0.15f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CloudDone,
-                                    contentDescription = null,
-                                    tint = BrandTeal,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    text = "Shared Cloud Database (Firestore)",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = cloudSyncStatus,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (isCloudConnected) MedGreen else BrandTeal
-                                )
-                            }
-                        }
-                    }
-
-                    if (lastCloudSyncTime != null) {
-                        Text(
-                            text = "Last cloud synchronization: $lastCloudSyncTime",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 12.dp),
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                    )
-
-                    // Web App Service Worker and HTTPS Hosting Information Box
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                            .padding(12.dp)
-                    ) {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "🌐 Web App Service Worker & HTTPS Hosting",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            Text(
-                                text = "• Background Service Worker: /firebase-messaging-sw.js active\n• Notifications arrive even when web app / browser tab is closed\n• HTTPS Firebase Hosting configured in firebase.json\n• Shared collections: hospital_patients, hospital_notifications, hospital_care_plans",
-                                fontSize = 11.sp,
-                                lineHeight = 16.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { viewModel.syncAllLocalDataToCloud() },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(38.dp)
-                        ) {
-                            Text("Sync All to Cloud", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                viewModel.simulateIncomingFcmPush(
-                                    title = "📢 Cloud Database Broadcast",
-                                    body = "Shared Firestore notification received from web portal/doctor device."
-                                )
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(38.dp)
-                        ) {
-                            Text("Test Cloud Alert", fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-
         // Instant Multi-Phone & Web Dispatch Center
         if (canDispatch) {
             item {
@@ -564,18 +424,106 @@ fun NotificationsScreen(viewModel: HospitalViewModel) {
                             modifier = Modifier.fillMaxWidth()
                         )
 
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Voice Message Broadcast Section
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Mic,
+                                            contentDescription = null,
+                                            tint = if (isRecordingVoice) Color(0xFFDC2626) else BrandTeal,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (isRecordingVoice) "Recording... (${voiceRecordDurationSec}s)"
+                                                else if (recordedVoiceBase64 != null) "Voice Message Attached (${voiceRecordDurationSec}s)"
+                                                else "Attach Voice Announcement",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isRecordingVoice) Color(0xFFDC2626) else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        if (recordedVoiceBase64 != null && !isRecordingVoice) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    playVoiceAudio(recordedVoiceBase64!!, "preview_draft")
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                modifier = Modifier.height(32.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isPlayingVoicePreview && currentlyPlayingNotifId == "preview_draft") Icons.Default.Stop else Icons.Default.PlayArrow,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(if (isPlayingVoicePreview && currentlyPlayingNotifId == "preview_draft") "Stop" else "Listen", fontSize = 11.sp)
+                                            }
+
+                                            OutlinedButton(
+                                                onClick = {
+                                                    recordedVoiceBase64 = null
+                                                    voiceRecordDurationSec = 0
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                modifier = Modifier.height(32.dp)
+                                            ) {
+                                                Text("Remove", fontSize = 11.sp, color = Color(0xFFDC2626))
+                                            }
+                                        }
+
+                                        Button(
+                                            onClick = { toggleVoiceRecording() },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (isRecordingVoice) Color(0xFFDC2626) else BrandTeal
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isRecordingVoice) Icons.Default.Stop else Icons.Default.Mic,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(if (isRecordingVoice) "Stop" else "Record Voice", fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(14.dp))
+                        val canSend = (announcementTitle.isNotBlank() && announcementBody.isNotBlank()) || recordedVoiceBase64 != null
                         Button(
                             onClick = {
-                                if (announcementTitle.isNotBlank() && announcementBody.isNotBlank()) {
+                                if (canSend) {
                                     viewModel.dispatchInstantBroadcast(
                                         title = announcementTitle,
                                         body = announcementBody,
                                         priority = selectedPriority,
-                                        targetAudience = selectedAudience
+                                        targetAudience = selectedAudience,
+                                        voiceNoteBase64 = recordedVoiceBase64,
+                                        voiceDurationSec = voiceRecordDurationSec
                                     )
                                     announcementTitle = ""
                                     announcementBody = ""
+                                    recordedVoiceBase64 = null
+                                    voiceRecordDurationSec = 0
                                 }
                             },
                             shape = RoundedCornerShape(12.dp),
@@ -584,7 +532,7 @@ fun NotificationsScreen(viewModel: HospitalViewModel) {
                                 else if (selectedPriority == com.example.model.BroadcastPriority.APP_UPDATE) Color(0xFF0284C7)
                                 else BrandTeal
                             ),
-                            enabled = announcementTitle.isNotBlank() && announcementBody.isNotBlank(),
+                            enabled = canSend,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
@@ -593,7 +541,7 @@ fun NotificationsScreen(viewModel: HospitalViewModel) {
                             Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "⚡ Dispatch to ALL Phones & Web Clients",
+                                text = if (recordedVoiceBase64 != null) "⚡ Dispatch Voice Announcement" else "⚡ Dispatch to ALL Phones & Web Clients",
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -603,10 +551,47 @@ fun NotificationsScreen(viewModel: HospitalViewModel) {
             }
         }
 
-        // Section Title: Notifications List
+        // Section Title: Notifications List with Clear Button
         item {
-            Text(
-                text = "HOSPITAL NOTIFICATIONS & UPDATES (${visibleNotifs.size})",
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "HOSPITAL NOTIFICATIONS & UPDATES (${visibleNotifs.size})",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    letterSpacing = 0.6.sp
+                )
+
+                if (visibleNotifs.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = { viewModel.clearAllNotificationsAndUpdates() },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .height(32.dp)
+                            .testTag("clear_notifications_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteSweep,
+                            contentDescription = "Clear All",
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Clear notifications and updates",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFDC2626)
+                        )
+                    }
+                }
+            }
+        }
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

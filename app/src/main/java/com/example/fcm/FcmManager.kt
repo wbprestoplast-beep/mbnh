@@ -15,7 +15,6 @@ import com.example.data.AppDatabase
 import com.example.data.NotificationEntity
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
-import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +30,7 @@ object FcmManager {
     private const val TAG = "FcmManager"
     const val CHANNEL_ID_HOSPITAL = "hospital_alerts"
     const val CHANNEL_ID_CRITICAL = "hospital_critical_alerts"
+    const val CHANNEL_ID_SYNC = "hospital_background_sync"
     const val DEFAULT_TOPIC_BROADCAST = "hospital_broadcasts"
     const val DEFAULT_TOPIC_EMERGENCY = "hospital_emergencies"
 
@@ -56,13 +56,6 @@ object FcmManager {
         // Provide immediate device endpoint token for Cloud Firestore multi-device message routing
         if (_fcmToken.value == null) {
             _fcmToken.value = "fcm_cloud_inst_${DEVICE_INSTANCE_ID}"
-        }
-
-        // Explicitly deactivate FCM background auto-init to prevent unprovisioned registration hard failures
-        try {
-            FirebaseMessaging.getInstance().isAutoInitEnabled = false
-        } catch (e: Exception) {
-            Log.d(TAG, "FirebaseMessaging auto-init configuration note: ${e.message}")
         }
 
         Log.d(TAG, "Notification channel and real-time cloud dispatch initialized for device $DEVICE_INSTANCE_ID")
@@ -111,6 +104,19 @@ object FcmManager {
                 setShowBadge(true)
             }
             notificationManager.createNotificationChannel(criticalChannel)
+
+            // Silent Persistent Background Service Channel
+            val syncChannel = NotificationChannel(
+                CHANNEL_ID_SYNC,
+                "Background Cloud Synchronization",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Keeps real-time Cloud Firestore updates and background push alerts active."
+                setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
+            }
+            notificationManager.createNotificationChannel(syncChannel)
         }
     }
 

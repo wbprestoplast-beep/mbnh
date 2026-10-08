@@ -125,6 +125,9 @@ interface HospitalDao {
     @Query("UPDATE notifications SET read = 1")
     suspend fun markAllNotificationsAsRead()
 
+    @Query("DELETE FROM notifications")
+    suspend fun deleteAllNotifications()
+
     // Counts for initialization check
     @Query("SELECT COUNT(*) FROM users")
     suspend fun getUsersCount(): Int
