@@ -377,13 +377,20 @@
       appId: "1:300073810040:android:1cd9173356655572c1d58d"
     };
 
+    const CLOUD_DATABASE_ID = "ai-studio-android-mbnursin-fd9ce470-c0d4-4daf-ad31-9ab650ee0c09";
     let app = null;
     let db = null;
     let messaging = null;
 
     try {
       app = firebase.initializeApp(firebaseConfig);
-      db = firebase.firestore();
+      try {
+        db = app.firestore(CLOUD_DATABASE_ID);
+        console.log('[Web] Connected to named Cloud Firestore database:', CLOUD_DATABASE_ID);
+      } catch (errDb) {
+        console.warn('[Web] Named db fallback to default:', errDb);
+        db = firebase.firestore();
+      }
     } catch (e) {
       console.warn('Firebase init:', e);
     }
@@ -561,27 +568,22 @@
       btn.innerHTML = '<span>⚡ Dispatch to All Android Phones & Web Clients</span>';
     }
 
-    // 6. Shared Bed Status
-    const defaultBeds = [
-      { code: 'G-101', occupied: true, patient: 'Lakshmi Devi' },
-      { code: 'G-102', occupied: true, patient: 'Mamata Khatun' },
-      { code: 'G-103', occupied: false },
-      { code: 'G-104', occupied: false },
-      { code: 'G-105', occupied: true, patient: 'Bikash Shaw' },
-      { code: 'G-106', occupied: true, patient: 'Imran Ali' },
-      { code: 'G-107', occupied: false },
-      { code: 'G-108', occupied: true, patient: 'A. Mandal' },
-      { code: 'I-201', occupied: true, patient: 'Ratan Dey' },
-      { code: 'I-202', occupied: true, patient: 'Nirmal Bose' },
-      { code: 'I-203', occupied: true, patient: 'Subhash Mitra' },
-      { code: 'I-204', occupied: false },
-      { code: 'I-205', occupied: false },
-      { code: 'I-206', occupied: false },
-      { code: 'C-301', occupied: true, patient: 'Rupa Sen' },
-      { code: 'C-302', occupied: true, patient: 'Shikha Ghosh' },
-      { code: 'C-303', occupied: false },
-      { code: 'C-304', occupied: false }
+    // 6. Shared Bed Status — Synced with Android Wards & Beds
+    const HOSPITAL_WARDS = [
+      { name: "ICU", beds: ["101","102","103","104","105","106","107","108"] },
+      { name: "Male Ward", beds: ["201","202","203","204","205","206","207","208","209","210","211"] },
+      { name: "Female Ward", beds: ["212","213","214","215","216","217","218","219","220","221","222","223","224"] },
+      { name: "3rd Floor", beds: ["301","302A","302B","302C","302D","303","304","305","306","307A","307B","308","309A","309B","309C","310A","310B"] }
     ];
+
+    const allHospitalBeds = [];
+    HOSPITAL_WARDS.forEach(w => {
+      w.beds.forEach(b => {
+        allHospitalBeds.push({ ward: w.name, code: b, occupied: false, patient: '' });
+      });
+    });
+
+    let currentBedList = [...allHospitalBeds];
 
     function renderBeds(beds) {
       const container = document.getElementById('bed-grid-container');
@@ -590,13 +592,13 @@
 
       container.innerHTML = beds.map(bed => `
         <div class="bed-pill ${bed.occupied ? 'bed-occupied' : 'bed-free'}">
-          <div class="bed-code">${bed.code}</div>
+          <div class="bed-code">${bed.code} <span style="font-size: 10px; opacity: 0.7;">(${bed.ward})</span></div>
           <div>${bed.occupied ? '● ' + escapeHtml(bed.patient) : '✓ Available'}</div>
         </div>
       `).join('');
     }
 
-    renderBeds(defaultBeds);
+    renderBeds(currentBedList);
 
     // Live Patient Admissions & Bed Synchronization
     if (db) {
@@ -606,17 +608,18 @@
             const patientMap = {};
             snapshot.forEach(doc => {
               const data = doc.data();
-              if (data.bed) {
-                patientMap[data.bed] = data.name;
+              const isDischarged = (data.status || '').toUpperCase() === 'DISCHARGED';
+              if (data.bed && !isDischarged) {
+                patientMap[data.bed] = data.name || `Patient ${doc.id}`;
               }
             });
-            const updatedBeds = defaultBeds.map(bed => {
+            currentBedList = allHospitalBeds.map(bed => {
               if (patientMap[bed.code]) {
                 return { ...bed, occupied: true, patient: patientMap[bed.code] };
               }
-              return bed;
+              return { ...bed, occupied: false, patient: '' };
             });
-            renderBeds(updatedBeds);
+            renderBeds(currentBedList);
           }
         }, (err) => {
           console.warn('Patients snapshot stream fallback:', err);

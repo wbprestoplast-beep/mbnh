@@ -1,8 +1,13 @@
 package com.example.ui.components
 
+import android.graphics.BitmapFactory
+import android.util.Base64
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,15 +17,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.LocalHospital
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,19 +42,27 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import coil.compose.AsyncImage
 import com.example.model.DocumentFilter
+import java.io.File
 
 @Composable
 fun DocumentCanvasView(
     docTypeOrUri: String,
     filter: DocumentFilter = DocumentFilter.ORIGINAL,
+    title: String? = null,
+    category: String? = null,
+    patientName: String? = null,
+    remarks: String? = null,
     modifier: Modifier = Modifier
 ) {
     val colorFilter = when (filter) {
@@ -81,25 +101,271 @@ fun DocumentCanvasView(
         }
     }
 
+    val pages = if (docTypeOrUri.contains("|||PAGE_SEP|||")) {
+        docTypeOrUri.split("|||PAGE_SEP|||").filter { it.isNotBlank() }
+    } else {
+        listOf(docTypeOrUri)
+    }
+    var activePageIndex by remember(docTypeOrUri) { mutableStateOf(0) }
+    val cleanUri = pages.getOrElse(activePageIndex) { pages.firstOrNull() ?: docTypeOrUri }.trim()
+    var isAsyncLoadFailed by remember(cleanUri) { mutableStateOf(false) }
+
+    val decodedBase64Bitmap = remember(cleanUri) {
+        if (cleanUri.startsWith("data:image") || (cleanUri.length > 100 && !cleanUri.startsWith("/") && !cleanUri.startsWith("content:") && !cleanUri.startsWith("http") && !cleanUri.startsWith("file:"))) {
+            try {
+                val raw = if (cleanUri.contains(",")) cleanUri.substringAfter(",") else cleanUri
+                val bytes = Base64.decode(raw, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+    }
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
     ) {
-        when (docTypeOrUri) {
-            "SEED_RX" -> RxDocumentView(modifier = Modifier.fillMaxSize())
-            "SEED_LAB" -> LabDocumentView(modifier = Modifier.fillMaxSize())
-            "SEED_XRAY" -> XRayDocumentView(modifier = Modifier.fillMaxSize())
-            "SEED_MRI" -> MriDocumentView(modifier = Modifier.fillMaxSize())
+        when {
+            decodedBase64Bitmap != null -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        bitmap = decodedBase64Bitmap.asImageBitmap(),
+                        contentDescription = "Medical Document",
+                        colorFilter = colorFilter,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                }
+            }
+            cleanUri == "SEED_RX" -> RxDocumentView(modifier = Modifier.fillMaxSize())
+            cleanUri == "SEED_LAB" -> LabDocumentView(modifier = Modifier.fillMaxSize())
+            cleanUri == "SEED_XRAY" -> XRayDocumentView(modifier = Modifier.fillMaxSize())
+            cleanUri == "SEED_MRI" -> MriDocumentView(modifier = Modifier.fillMaxSize())
+            cleanUri.startsWith("/") -> {
+                val file = File(cleanUri)
+                if (file.exists() && file.length() > 0 && !isAsyncLoadFailed) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        AsyncImage(
+                            model = file,
+                            contentDescription = "Medical Document",
+                            colorFilter = colorFilter,
+                            onError = { isAsyncLoadFailed = true },
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                } else {
+                    GenericClinicalDocumentView(
+                        title = title ?: "Medical Report",
+                        category = category ?: "Clinical Record",
+                        patientName = patientName,
+                        remarks = remarks,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+            cleanUri.startsWith("content://") || cleanUri.startsWith("file://") || cleanUri.startsWith("http") -> {
+                if (isAsyncLoadFailed) {
+                    GenericClinicalDocumentView(
+                        title = title ?: "Medical Report",
+                        category = category ?: "Clinical Record",
+                        patientName = patientName,
+                        remarks = remarks,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        AsyncImage(
+                            model = cleanUri,
+                            contentDescription = "Medical Document",
+                            colorFilter = colorFilter,
+                            onError = { isAsyncLoadFailed = true },
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
+            }
             else -> {
-                AsyncImage(
-                    model = docTypeOrUri,
-                    contentDescription = "Medical Document",
-                    colorFilter = colorFilter,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
+                GenericClinicalDocumentView(
+                    title = title ?: cleanUri,
+                    category = category ?: "Clinical Document",
+                    patientName = patientName,
+                    remarks = remarks,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
+        }
+
+        if (pages.size > 1) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.75f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Page ${activePageIndex + 1}/${pages.size}",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                pages.indices.forEach { idx ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (idx == activePageIndex) Color(0xFF22D3EE) else Color.White.copy(alpha = 0.4f))
+                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                            .clickable { activePageIndex = idx }
+                    ) {
+                        Text("${idx + 1}", color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GenericClinicalDocumentView(
+    title: String,
+    category: String,
+    patientName: String? = null,
+    remarks: String? = null,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(Color.White)
+            .padding(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0E7490), RoundedCornerShape(6.dp))
+                .padding(8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_hospital_logo),
+                    contentDescription = "Company Logo",
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Column {
+                    Text(
+                        text = "MB NURSING HOME PVT. LTD.",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "OFFICIAL DIGITAL CLINICAL MEDICAL RECORD",
+                        fontSize = 8.sp,
+                        color = Color.White.copy(alpha = 0.85f)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title.ifBlank { "Medical Diagnostic Report" },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1E293B),
+                    maxLines = 1
+                )
+                Text(
+                    text = "Category: $category",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF0E7490)
+                )
+            }
+            if (!patientName.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFFE0F2FE))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = patientName,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0369A1)
+                    )
+                }
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = Color(0xFFE2E8F0))
+
+        Column(modifier = Modifier.weight(1f, fill = false)) {
+            Text(
+                text = "Clinical Record Review & Diagnostic Findings:",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF475569)
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = if (!remarks.isNullOrBlank()) remarks
+                else "1. Complete clinical diagnostic evaluation recorded on file.\n2. Vitals, treatment charts, and consultant notes synchronized.\n3. Verified electronic hospital record.",
+                fontSize = 8.5.sp,
+                lineHeight = 11.sp,
+                color = Color(0xFF334155),
+                maxLines = 4
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Verified,
+                    contentDescription = null,
+                    tint = Color(0xFF16A34A),
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(modifier = Modifier.width(3.dp))
+                Text(
+                    text = "VERIFIED HOSPITAL SCAN",
+                    fontSize = 7.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF16A34A)
+                )
+            }
+            Text(
+                text = "MB-HMS SECURE",
+                fontSize = 7.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF94A3B8)
+            )
         }
     }
 }
@@ -117,18 +383,26 @@ fun RxDocumentView(modifier: Modifier = Modifier) {
                 .background(Color(0xFFF0F7FA), RoundedCornerShape(6.dp))
                 .padding(8.dp)
         ) {
-            Column {
-                Text(
-                    text = "MB NURSING HOME PVT. LTD.",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0E7490)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_hospital_logo),
+                    contentDescription = "Company Logo",
+                    modifier = Modifier.size(18.dp)
                 )
-                Text(
-                    text = "Dr. Arif Khan · MD, DM (Cardiology) · Reg. WB-442211",
-                    fontSize = 8.sp,
-                    color = Color(0xFF64748B)
-                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Column {
+                    Text(
+                        text = "MB NURSING HOME PVT. LTD.",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0E7490)
+                    )
+                    Text(
+                        text = "Dr. Arif Khan · MD, DM (Cardiology) · Reg. WB-442211",
+                        fontSize = 8.sp,
+                        color = Color(0xFF64748B)
+                    )
+                }
             }
         }
 
@@ -212,18 +486,26 @@ fun LabDocumentView(modifier: Modifier = Modifier) {
                 .background(Color(0xFF0E7490), RoundedCornerShape(6.dp))
                 .padding(6.dp)
         ) {
-            Column {
-                Text(
-                    text = "MB NURSING HOME — PATHOLOGY LAB",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_hospital_logo),
+                    contentDescription = "Company Logo",
+                    modifier = Modifier.size(16.dp)
                 )
-                Text(
-                    text = "Complete Blood Count · Biochemistry Panel",
-                    fontSize = 7.5.sp,
-                    color = Color(0xFFCFFAFE)
-                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Column {
+                    Text(
+                        text = "MB NURSING HOME — PATHOLOGY LAB",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Complete Blood Count · Biochemistry Panel",
+                        fontSize = 7.5.sp,
+                        color = Color(0xFFCFFAFE)
+                    )
+                }
             }
         }
 

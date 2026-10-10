@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -9,15 +10,19 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -33,6 +38,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Visibility
@@ -54,6 +60,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.ui.platform.LocalContext
+import com.example.ui.components.ProfilePictureModal
+import com.example.ui.components.VoiceOutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -72,20 +81,24 @@ import androidx.compose.ui.window.Dialog
 import com.example.data.UserEntity
 import com.example.model.HospitalConstants
 import com.example.model.UserRole
+import com.example.model.canViewAllStaff
 import com.example.ui.components.UserAvatar
 import com.example.ui.theme.BrandCyan
 import com.example.ui.theme.BrandTeal
 import com.example.ui.theme.MedWarning
 import com.example.ui.viewmodel.HospitalViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AdminPortalScreen(viewModel: HospitalViewModel) {
+    val context = LocalContext.current
     val currentUser by viewModel.currentUser.collectAsState()
     val users by viewModel.users.collectAsState()
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "ADMINISTRATOR")
     val isBoss = userRole == UserRole.BOSS || currentUser?.id == "BOSS-0001"
+    val isAdministrator = userRole == UserRole.ADMINISTRATOR || currentUser?.role?.contains("ADMIN", ignoreCase = true) == true
+    val canManageStaff = isBoss || isAdministrator
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedRoleFilter by remember { mutableStateOf("ALL") }
@@ -97,15 +110,8 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
 
     var bossEditingUser by remember { mutableStateOf<UserEntity?>(null) }
     var showBossVaultModal by remember { mutableStateOf(false) }
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        if (uri != null && pendingPhotoUser != null) {
-            viewModel.updateUserPhoto(pendingPhotoUser!!.id, uri.toString())
-            pendingPhotoUser = null
-        }
-    }
+    var showBossUpdatePublisherModal by remember { mutableStateOf(false) }
+    val installedVersionName by viewModel.installedVersionName.collectAsState()
 
     val filteredStaff = users.filter { u ->
         val matchesCategory = when (selectedRoleFilter) {
@@ -155,26 +161,40 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = if (isBoss) "👑 Boss Control & Staff Management" else "Administrator Portal",
-                            fontSize = 17.sp,
+                            text = if (isBoss) "👑 Boss Staff Management" else if (canManageStaff) "Administrator Portal" else "Hospital Staff & Doctors Roster",
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
                         if (isBoss) {
+                            Spacer(modifier = Modifier.width(8.dp))
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(999.dp))
+                                    .defaultMinSize(minWidth = 100.dp)
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(MedWarning.copy(alpha = 0.15f))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text("FULL ACCESS", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MedWarning)
+                                Text(
+                                    text = "FULL ACCESS",
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MedWarning,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                         }
                     }
 
                     Text(
                         text = if (isBoss) "Boss ID authority: view all passwords & IDs, edit staff profiles, photos, numbers, and access rights."
-                        else "Manage hospital staff members, specialist doctors, and departments. User IDs set by Boss & Admin only.",
+                        else if (canManageStaff) "Manage hospital staff members, specialist doctors, and departments. User IDs set by Boss & Admin only."
+                        else "Directory of hospital specialists, doctors, and clinical staff. Tap on contact or phone button to call directly.",
                         fontSize = 12.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp, bottom = 14.dp)
@@ -190,50 +210,77 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
                         HeadcountStat("ADMINS", "$adminCount", MedWarning, Modifier.weight(1f))
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                modalInitialRole = UserRole.DOCTOR
-                                showAddModal = true
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                                .testTag("admin_add_doctor_button")
+                    if (canManageStaff) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Add Doctor", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                        }
+                            Button(
+                                onClick = {
+                                    modalInitialRole = UserRole.DOCTOR
+                                    showAddModal = true
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                modifier = Modifier
+                                    .defaultMinSize(minWidth = 140.dp)
+                                    .height(44.dp)
+                                    .testTag("admin_add_doctor_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Add Doctor",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
 
-                        Button(
-                            onClick = {
-                                modalInitialRole = UserRole.NURSE
-                                showAddModal = true
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                contentColor = MaterialTheme.colorScheme.onSurface
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                                .testTag("admin_add_staff_button")
-                        ) {
-                            Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Add Staff / Nurse", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            Button(
+                                onClick = {
+                                    modalInitialRole = UserRole.NURSE
+                                    showAddModal = true
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                modifier = Modifier
+                                    .defaultMinSize(minWidth = 165.dp)
+                                    .height(44.dp)
+                                    .testTag("admin_add_staff_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Add Staff / Nurse",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
                         }
                     }
 
-                    // Boss Exclusive Master Vault Access Button
+                    // Boss Exclusive Controls
                     if (isBoss) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Button(
@@ -245,12 +292,32 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(44.dp)
+                                .height(42.dp)
                         ) {
                             Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(17.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("👑 View All Staff Passwords & IDs Vault", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("👑 View All Staff Passwords & IDs Vault", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { showBossUpdatePublisherModal = true },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = BrandTeal,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("boss_publish_update_btn")
+                        ) {
+                            Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("🚀 Boss Control: Publish App Update to All Devices", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        }
+
+
                     }
                 }
             }
@@ -258,11 +325,19 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
 
         // Search Bar
         item {
-            OutlinedTextField(
+            VoiceOutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 placeholder = { Text("Search name, user ID, phone, dept or specialty…") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                customTrailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                        }
+                    }
+                },
+                speechPrompt = "Speak staff name, user ID, phone, department, or specialty to search...",
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
@@ -277,6 +352,9 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
                 val filters = listOf(
                     "ALL" to "All Staff (${users.size})",
                     "DOCTOR" to "Doctors ($doctorCount)",
+                    "RMO" to "RMO (${users.count { it.role.equals("RMO", ignoreCase = true) }})",
+                    "MEDICAL_SUPER" to "Med Super (${users.count { it.role.equals("MEDICAL_SUPER", ignoreCase = true) }})",
+                    "RMO_INCHARGE" to "RMO Incharge (${users.count { it.role.equals("RMO_INCHARGE", ignoreCase = true) }})",
                     "NURSE" to "Nurses ($nurseCount)",
                     "ADMINISTRATOR" to "Admins ($adminCount)",
                     "CLINICAL" to "All Clinical"
@@ -285,8 +363,16 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
                     FilterChip(
                         selected = selectedRoleFilter == key,
                         onClick = { selectedRoleFilter = key },
-                        label = { Text(label, fontSize = 12.sp) },
+                        label = {
+                            Text(
+                                text = label,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        },
                         shape = RoundedCornerShape(999.dp),
+                        modifier = Modifier.defaultMinSize(minHeight = 38.dp),
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = BrandCyan.copy(alpha = 0.2f),
                             selectedLabelColor = MaterialTheme.colorScheme.primary
@@ -299,7 +385,7 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
         // Staff Items List
         items(filteredStaff) { staff ->
             val sRole = UserRole.fromKey(staff.role)
-            val canDeleteThis = staff.id != currentUser?.id && staff.role != "BOSS"
+            val canDeleteThis = canManageStaff && staff.id != currentUser?.id && staff.role != "BOSS"
 
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -347,28 +433,64 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
                             Text(
                                 text = "ID: ${staff.id} · ${sRole.label} · ${staff.dept.ifBlank { staff.specialty }}",
                                 fontSize = 12.sp,
+                                lineHeight = 18.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = BrandTeal,
-                                modifier = Modifier.padding(top = 1.dp)
+                                modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
                             )
                             if (staff.phone.isNotBlank()) {
-                                Text(
-                                    text = "📞 ${staff.phone}",
-                                    fontSize = 11.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = 1.dp)
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .padding(top = 2.dp)
+                                        .clickable {
+                                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${staff.phone.trim()}"))
+                                            context.startActivity(intent)
+                                        }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Phone,
+                                        contentDescription = "Call ${staff.name}",
+                                        tint = BrandTeal,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = staff.phone,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = BrandTeal
+                                    )
+                                }
                             }
                         }
 
-                        // Photo quick update button
-                        IconButton(
-                            onClick = {
-                                pendingPhotoUser = staff
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        // Direct Call Phone Button
+                        if (staff.phone.isNotBlank()) {
+                            IconButton(
+                                onClick = {
+                                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${staff.phone.trim()}"))
+                                    context.startActivity(intent)
+                                },
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(com.example.ui.theme.MedGreen.copy(alpha = 0.15f))
+                                    .testTag("admin_call_button_${staff.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Phone,
+                                    contentDescription = "Direct call ${staff.name}",
+                                    tint = com.example.ui.theme.MedGreen,
+                                    modifier = Modifier.size(16.dp)
                                 )
-                            },
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+
+                        // Photo quick update button (Take selfie / upload photo)
+                        IconButton(
+                            onClick = { pendingPhotoUser = staff },
                             modifier = Modifier
                                 .size(34.dp)
                                 .clip(RoundedCornerShape(8.dp))
@@ -376,7 +498,7 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
                         ) {
                             Icon(
                                 imageVector = Icons.Default.CameraAlt,
-                                contentDescription = "Update photo",
+                                contentDescription = "Take selfie or upload photo",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -491,6 +613,7 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
         BossEditStaffDialog(
             staff = targetStaff,
             onDismiss = { bossEditingUser = null },
+            onUpdatePhotoClick = { pendingPhotoUser = targetStaff },
             onConfirm = { oldId, newId, name, role, dept, spec, phone, email, pass, photoUri ->
                 viewModel.updateStaffByBoss(oldId, newId, name, role, dept, spec, phone, email, pass, photoUri)
                 bossEditingUser = null
@@ -507,6 +630,33 @@ fun AdminPortalScreen(viewModel: HospitalViewModel) {
                 showBossVaultModal = false
                 bossEditingUser = staff
             }
+        )
+    }
+
+    // Boss App Update Publisher Dialog
+    if (showBossUpdatePublisherModal) {
+        BossUpdatePublisherDialog(
+            installedVersionName = installedVersionName,
+            onDismiss = { showBossUpdatePublisherModal = false },
+            onPublish = { vName, title, notes, force ->
+                viewModel.publishAppUpdateByBoss(
+                    versionName = vName,
+                    releaseTitle = title,
+                    releaseNotes = notes,
+                    forceUpdate = force
+                )
+            }
+        )
+    }
+
+    // Selfie & Profile Photo Modal for Staff Members
+    if (pendingPhotoUser != null) {
+        ProfilePictureModal(
+            targetUserId = pendingPhotoUser!!.id,
+            userName = pendingPhotoUser!!.name,
+            currentPhotoUri = pendingPhotoUser!!.photoUri,
+            viewModel = viewModel,
+            onDismiss = { pendingPhotoUser = null }
         )
     }
 
@@ -643,22 +793,24 @@ fun AddMemberDialog(
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Full Name *") },
+                    speechPrompt = "Speak staff member's full name...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
                 // Custom User ID field (set by Boss and Admin only)
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = customIdInput,
                     onValueChange = { customIdInput = it },
                     label = { Text("Custom User ID (Set by Admin/Boss)") },
                     placeholder = { Text("Leave empty for auto: ${selectedRole.prefix}-XXXX") },
                     supportingText = { Text("User ID is exclusively provisioned by Admin & Boss", fontSize = 10.5.sp) },
+                    speechPrompt = "Speak custom user ID or prefix...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -732,19 +884,21 @@ fun AddMemberDialog(
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it },
                     label = { Text("Contact Phone Number") },
+                    speechPrompt = "Speak contact phone number...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = tempPass,
                     onValueChange = { tempPass = it },
                     label = { Text("Initial Password") },
+                    speechPrompt = "Speak initial password...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -780,6 +934,7 @@ fun AddMemberDialog(
 fun BossEditStaffDialog(
     staff: UserEntity,
     onDismiss: () -> Unit,
+    onUpdatePhotoClick: () -> Unit = {},
     onConfirm: (oldId: String, newId: String, name: String, role: UserRole, dept: String, spec: String, phone: String, email: String, pass: String, photoUri: String?) -> Unit
 ) {
     var idInput by remember { mutableStateOf(staff.id) }
@@ -790,7 +945,7 @@ fun BossEditStaffDialog(
     var phoneInput by remember { mutableStateOf(staff.phone) }
     var emailInput by remember { mutableStateOf(staff.email) }
     var passInput by remember { mutableStateOf(staff.pass) }
-    var photoUri by remember { mutableStateOf(staff.photoUri) }
+    var photoUri by remember(staff.photoUri) { mutableStateOf(staff.photoUri) }
     var showPass by remember { mutableStateOf(true) }
 
     var isRoleExpanded by remember { mutableStateOf(false) }
@@ -838,48 +993,46 @@ fun BossEditStaffDialog(
                     UserAvatar(name = nameInput.ifBlank { "?" }, photoUri = photoUri, size = 52.dp)
                     Spacer(modifier = Modifier.width(12.dp))
                     Button(
-                        onClick = {
-                            photoPicker.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        },
+                        onClick = onUpdatePhotoClick,
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Icon(Icons.Default.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Change Picture", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
+                        Text("Selfie / Change Picture", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                     }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
                 // Boss can edit User ID
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = idInput,
                     onValueChange = { idInput = it },
                     label = { Text("User ID * (Boss Authority)") },
                     supportingText = { Text("Only Boss can change user IDs", fontSize = 10.5.sp, color = MedWarning) },
+                    speechPrompt = "Speak staff User ID...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = nameInput,
                     onValueChange = { nameInput = it },
                     label = { Text("Full Name *") },
+                    speechPrompt = "Speak staff full name...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
                 // Boss can view and edit Password
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = passInput,
                     onValueChange = { passInput = it },
                     label = { Text("Password * (Plain View / Boss Access)") },
-                    trailingIcon = {
+                    customTrailingIcon = {
                         IconButton(onClick = { showPass = !showPass }) {
                             Icon(
                                 imageVector = if (showPass) Icons.Default.VisibilityOff else Icons.Default.Visibility,
@@ -888,6 +1041,7 @@ fun BossEditStaffDialog(
                         }
                     },
                     visualTransformation = if (showPass) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    speechPrompt = "Speak password...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -915,28 +1069,31 @@ fun BossEditStaffDialog(
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = phoneInput,
                     onValueChange = { phoneInput = it },
                     label = { Text("Phone Number") },
+                    speechPrompt = "Speak phone number...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = deptInput,
                     onValueChange = { deptInput = it },
                     label = { Text("Department") },
+                    speechPrompt = "Speak department name...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = specialtyInput,
                     onValueChange = { specialtyInput = it },
                     label = { Text("Clinical Specialty") },
+                    speechPrompt = "Speak clinical specialty...",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1036,10 +1193,18 @@ fun BossMasterVaultDialog(
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = vaultSearch,
                     onValueChange = { vaultSearch = it },
                     placeholder = { Text("Filter staff ID or name…", fontSize = 12.sp) },
+                    customTrailingIcon = {
+                        if (vaultSearch.isNotEmpty()) {
+                            IconButton(onClick = { vaultSearch = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    speechPrompt = "Speak staff name, user ID or role to filter...",
                     singleLine = true,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1074,7 +1239,18 @@ fun BossMasterVaultDialog(
                                         color = BrandTeal
                                     )
                                     if (user.phone.isNotBlank()) {
-                                        Text(text = "📞 ${user.phone}", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        val ctx = LocalContext.current
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.clickable {
+                                                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${user.phone.trim()}"))
+                                                ctx.startActivity(intent)
+                                            }
+                                        ) {
+                                            Icon(Icons.Default.Phone, contentDescription = "Call", tint = BrandTeal, modifier = Modifier.size(11.dp))
+                                            Spacer(modifier = Modifier.width(2.dp))
+                                            Text(text = user.phone, fontSize = 10.5.sp, color = BrandTeal, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
 
@@ -1137,3 +1313,135 @@ fun HeadcountStat(
         }
     }
 }
+
+@Composable
+fun BossUpdatePublisherDialog(
+    installedVersionName: String,
+    onDismiss: () -> Unit,
+    onPublish: (versionName: String, title: String, notes: String, force: Boolean) -> Unit
+) {
+    var versionName by remember { mutableStateOf("v1.2") }
+    var releaseTitle by remember { mutableStateOf("Multi-Device Auto-Sync & Feature Upgrade") }
+    var releaseNotes by remember { mutableStateOf("Boss updated hospital modules. All staff devices auto-syncing in real-time.") }
+    var forceUpdate by remember { mutableStateOf(true) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth().padding(8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "👑 Boss App Auto-Update Publisher",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MedWarning
+                        )
+                        Text(
+                            text = "Current: $installedVersionName · Auto-updates all staff devices",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                VoiceOutlinedTextField(
+                    value = versionName,
+                    onValueChange = { versionName = it },
+                    label = { Text("Version Label (e.g. v1.2)") },
+                    speechPrompt = "Speak version label...",
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                VoiceOutlinedTextField(
+                    value = releaseTitle,
+                    onValueChange = { releaseTitle = it },
+                    label = { Text("Release Title") },
+                    speechPrompt = "Speak release title...",
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                VoiceOutlinedTextField(
+                    value = releaseNotes,
+                    onValueChange = { releaseNotes = it },
+                    label = { Text("Release Notes & Features") },
+                    speechPrompt = "Speak release notes...",
+                    minLines = 3,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .clickable { forceUpdate = !forceUpdate }
+                        .padding(12.dp)
+                ) {
+                    androidx.compose.material3.Switch(
+                        checked = forceUpdate,
+                        onCheckedChange = { forceUpdate = it }
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Force Instant Auto-Update on All Devices",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "All staff devices update data & features automatically.",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel")
+                    }
+
+                    Button(
+                        onClick = {
+                            onPublish(versionName.trim(), releaseTitle.trim(), releaseNotes.trim(), forceUpdate)
+                            onDismiss()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
+                        modifier = Modifier.weight(1.5f)
+                    ) {
+                        Text("🚀 Publish Now", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+

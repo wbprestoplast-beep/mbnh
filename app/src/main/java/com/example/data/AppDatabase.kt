@@ -17,9 +17,10 @@ import kotlinx.coroutines.launch
         ClinicalNoteEntity::class,
         CarePlanEntity::class,
         AttendanceEntity::class,
+        VitalRecordEntity::class,
         NotificationEntity::class
     ],
-    version = 1,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,7 +40,8 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "mb_nursing_home.db"
-                ).addCallback(object : Callback() {
+                ).fallbackToDestructiveMigration()
+                .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
                         scope.launch(Dispatchers.IO) {
@@ -63,11 +65,6 @@ abstract class AppDatabase : RoomDatabase() {
                 dao.insertCarePlans(HospitalSeedData.carePlans)
                 dao.insertAttendances(HospitalSeedData.attendances)
                 dao.insertNotifications(HospitalSeedData.notifications)
-            } else {
-                val boss = dao.getUserById("BOSS-0001")
-                if (boss != null && (boss.pass == "boss@2026" || boss.pass != "12345")) {
-                    dao.resetAllUsersPasswordToDefault()
-                }
             }
         }
     }

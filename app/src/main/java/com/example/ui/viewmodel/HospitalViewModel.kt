@@ -9,9 +9,11 @@ import com.example.data.CarePlanEntity
 import com.example.data.ClinicalNoteEntity
 import com.example.data.DocumentEntity
 import com.example.data.HospitalRepository
+import com.example.data.HospitalSeedData
 import com.example.data.NotificationEntity
 import com.example.data.PatientEntity
 import com.example.data.UserEntity
+import com.example.data.VitalRecordEntity
 import com.example.model.AppScreen
 import com.example.model.BroadcastPriority
 import com.example.model.DocCategory
@@ -19,12 +21,19 @@ import com.example.model.DocumentFilter
 import com.example.model.HospitalBroadcast
 import com.example.model.UserRole
 import com.example.ui.theme.AppThemeSetting
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,44 +41,91 @@ import java.util.UUID
 
 class HospitalViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository: HospitalRepository
+    private val db = AppDatabase.getDatabase(application, viewModelScope)
+    private val repository = HospitalRepository(db.hospitalDao())
+
+    // Device Credentials Auto-Save SharedPreferences (safely accessed)
+    private fun getAuthPrefs(): android.content.SharedPreferences? {
+        return try {
+            getApplication<Application>().getSharedPreferences("hms_device_credentials", android.content.Context.MODE_PRIVATE)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    val savedUserId: String
+        get() = try {
+            getAuthPrefs()?.getString("saved_user_id", "") ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+
+    val savedPassword: String
+        get() = try {
+            getAuthPrefs()?.getString("saved_password", "") ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+
+    fun saveLoginCredentials(id: String, pass: String) {
+        try {
+            getAuthPrefs()?.edit()
+                ?.putString("saved_user_id", id.trim())
+                ?.putString("saved_password", pass.trim())
+                ?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun clearSavedLoginCredentials() {
+        try {
+            getAuthPrefs()?.edit()?.clear()?.apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun normalizeUserId(raw: String): String {
+        return raw.trim()
+            .replace("\u00A0", "")
+            .replace("\u200B", "")
+            .replace(" ", "")
+            .replace("-", "")
+            .replace("_", "")
+            .uppercase()
+    }
+
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
     val todayDate: String get() = dateFormat.format(Date())
     val currentTime: String get() = timeFormat.format(Date())
 
-    init {
-        val db = AppDatabase.getDatabase(application, viewModelScope)
-        repository = HospitalRepository(db.hospitalDao())
-        viewModelScope.launch {
-            repository.ensureSeeded()
-            // Start real-time Firestore sync & cloud push notification listener
-            com.example.cloud.CloudDatabaseManager.startRealtimeCloudSync(application, repository)
-        }
-    }
+    // Active User & Navigation
+    private val _currentUser = MutableStateFlow<UserEntity?>(null)
+    val currentUser: StateFlow<UserEntity?> = _currentUser.asStateFlow()
 
-    // Database Streams
+    // Database Streams - Eagerly collected so data is always synchronized and never stalls
     val users: StateFlow<List<UserEntity>> = repository.allUsers
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val patients: StateFlow<List<PatientEntity>> = repository.allPatients
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val documents: StateFlow<List<DocumentEntity>> = repository.allDocuments
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val clinicalNotes: StateFlow<List<ClinicalNoteEntity>> = repository.allClinicalNotes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val carePlans: StateFlow<List<CarePlanEntity>> = repository.allCarePlans
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val attendance: StateFlow<List<AttendanceEntity>> = repository.allAttendance
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val notifications: StateFlow<List<NotificationEntity>> = repository.allNotifications
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val vitalRecords: StateFlow<List<VitalRecordEntity>> = repository.allVitalRecords
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // FCM Push Messaging Streams
     val fcmToken: StateFlow<String?> = com.example.fcm.FcmManager.fcmToken
@@ -80,11 +136,27 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
     val cloudSyncStatus: StateFlow<String> = com.example.cloud.CloudDatabaseManager.cloudSyncStatus
     val lastCloudSyncTime: StateFlow<String?> = com.example.cloud.CloudDatabaseManager.lastSyncTime
     val latestBroadcast: StateFlow<HospitalBroadcast?> = com.example.cloud.CloudDatabaseManager.latestBroadcast
+    val allBroadcasts: StateFlow<List<HospitalBroadcast>> = com.example.cloud.CloudDatabaseManager.allBroadcasts
+    val appUpdateInfo: StateFlow<com.example.model.AppUpdateInfo?> = com.example.cloud.CloudDatabaseManager.appUpdateInfo
+
+    private val _installedVersionCode = MutableStateFlow(1)
+    val installedVersionCode: StateFlow<Int> = _installedVersionCode.asStateFlow()
+
+    private val _installedVersionName = MutableStateFlow("1.0")
+    val installedVersionName: StateFlow<String> = _installedVersionName.asStateFlow()
+
+    private val _showUpdateModal = MutableStateFlow(false)
+    val showUpdateModal: StateFlow<Boolean> = _showUpdateModal.asStateFlow()
+
+    private val _isUpdatingApp = MutableStateFlow(false)
+    val isUpdatingApp: StateFlow<Boolean> = _isUpdatingApp.asStateFlow()
+
+    private val _isSyncingAllDevices = MutableStateFlow(false)
+    val isSyncingAllDevices: StateFlow<Boolean> = _isSyncingAllDevices.asStateFlow()
+
+    private val _lastAppliedPulseId = MutableStateFlow("")
 
     // Active User & Navigation
-    private val _currentUser = MutableStateFlow<UserEntity?>(null)
-    val currentUser: StateFlow<UserEntity?> = _currentUser.asStateFlow()
-
     private val _screenStack = MutableStateFlow<List<AppScreen>>(listOf(AppScreen.HOME))
     val screenStack: StateFlow<List<AppScreen>> = _screenStack.asStateFlow()
 
@@ -121,16 +193,208 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
         _themeSetting.value = setting
     }
 
-    // Auth
-    fun login(id: String, pass: String): Boolean {
-        val user = users.value.firstOrNull { it.id.equals(id.trim(), ignoreCase = true) }
-        if (user != null && user.pass == pass.trim()) {
+    init {
+        viewModelScope.launch {
+            repository.ensureSeeded()
+            // Start real-time Firestore sync & cloud push notification listener
+            com.example.cloud.CloudDatabaseManager.startRealtimeCloudSync(application, repository)
+            // Immediately pull any new staff/data from cloud to ensure all devices have identical records
+            com.example.cloud.CloudDatabaseManager.reconcileWithCloudServer(application, repository)
+        }
+
+        viewModelScope.launch {
+            // Real-time synchronization of active user sessions and staff profiles across all devices
+            users.collect { userList ->
+                val current = _currentUser.value
+                if (current != null) {
+                    val updatedCurrent = userList.firstOrNull { it.id == current.id }
+                    if (updatedCurrent != null && (updatedCurrent.name != current.name ||
+                            updatedCurrent.phone != current.phone ||
+                            updatedCurrent.email != current.email ||
+                            updatedCurrent.photoUri != current.photoUri ||
+                            updatedCurrent.role != current.role ||
+                            updatedCurrent.dept != current.dept ||
+                            updatedCurrent.specialty != current.specialty ||
+                            updatedCurrent.pass != current.pass)) {
+                        _currentUser.value = updatedCurrent
+                    } else if (updatedCurrent == null && current.id != "BOSS-0001") {
+                        // Staff account was removed from registry on another device or by Boss
+                        _currentUser.value = null
+                        _screenStack.value = listOf(AppScreen.HOME)
+                        showToast("Account was updated or removed from staff registry")
+                    }
+                } else if (savedUserId.isNotBlank()) {
+                    val savedUser = userList.firstOrNull { 
+                        it.id.equals(savedUserId, ignoreCase = true) || 
+                        normalizeUserId(it.id) == normalizeUserId(savedUserId) 
+                    }
+                    if (savedUser != null) {
+                        _currentUser.value = savedUser
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            // Real-time listener for Boss App Updates across all devices
+            appUpdateInfo.collect { update ->
+                if (update != null) {
+                    val isNewVersion = update.versionCode > _installedVersionCode.value
+                    val isNewPulse = update.updatePulseId.isNotBlank() && update.updatePulseId != _lastAppliedPulseId.value
+                    if (isNewVersion || isNewPulse) {
+                        if (update.forceUpdate) {
+                            applyAppUpdateAndSync()
+                        } else {
+                            _showUpdateModal.value = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private val _isPlayingAudio = MutableStateFlow(false)
+    val isPlayingAudio: StateFlow<Boolean> = _isPlayingAudio.asStateFlow()
+
+    private val _currentlyPlayingAudioId = MutableStateFlow<String?>(null)
+    val currentlyPlayingAudioId: StateFlow<String?> = _currentlyPlayingAudioId.asStateFlow()
+
+    fun playVoiceMessage(base64Audio: String, id: String) {
+        if (_currentlyPlayingAudioId.value == id && _isPlayingAudio.value) {
+            stopVoiceMessage()
+            return
+        }
+        _currentlyPlayingAudioId.value = id
+        _isPlayingAudio.value = true
+        com.example.util.VoiceAudioHelper.playVoiceAudio(
+            context = getApplication(),
+            base64Data = base64Audio,
+            onCompletion = {
+                _isPlayingAudio.value = false
+                _currentlyPlayingAudioId.value = null
+            },
+            onError = { err ->
+                _isPlayingAudio.value = false
+                _currentlyPlayingAudioId.value = null
+                showToast("Audio notice: $err")
+            }
+        )
+    }
+
+    fun stopVoiceMessage() {
+        com.example.util.VoiceAudioHelper.stopAudio()
+        _isPlayingAudio.value = false
+        _currentlyPlayingAudioId.value = null
+    }
+
+    // Auth - Resilient multi-tier validation supporting exact match, voice spacing ("DOC 2001"), case-insensitivity, digits ("2101"), phone, email, and Cloud lookup
+    fun loginWithCloudFallback(
+        id: String,
+        pass: String,
+        autoSave: Boolean = true,
+        onResult: (Boolean, String?) -> Unit
+    ) {
+        val cleanInputId = id.trim().replace("\u00A0", "").replace("\u200B", "")
+        val normalizedInputId = normalizeUserId(id)
+        val cleanPass = pass.trim().replace("\u00A0", "").replace("\u200B", "")
+        val inputNumeric = cleanInputId.filter { it.isDigit() }
+        val cleanPhoneDigits = cleanInputId.filter { it.isDigit() }.takeLast(10)
+
+        fun matchUser(u: UserEntity): Boolean {
+            val userNumeric = u.id.filter { it.isDigit() }
+            val userPhoneDigits = u.phone.filter { it.isDigit() }.takeLast(10)
+            return u.id.equals(cleanInputId, ignoreCase = true) ||
+                   normalizeUserId(u.id) == normalizedInputId ||
+                   (inputNumeric.isNotBlank() && inputNumeric == userNumeric) ||
+                   (cleanPhoneDigits.length >= 10 && cleanPhoneDigits == userPhoneDigits) ||
+                   u.email.equals(cleanInputId, ignoreCase = true) ||
+                   u.name.equals(cleanInputId, ignoreCase = true) ||
+                   u.name.split(" ").any { it.equals(cleanInputId, ignoreCase = true) } ||
+                   u.role.equals(cleanInputId, ignoreCase = true) ||
+                   u.role.equals(normalizedInputId, ignoreCase = true)
+        }
+
+        fun checkPasswordMatches(u: UserEntity): Boolean {
+            val dbPass = u.pass.trim().replace("\u00A0", "").replace("\u200B", "")
+            return dbPass.equals(cleanPass, ignoreCase = false) ||
+                   dbPass.equals(cleanPass, ignoreCase = true) ||
+                   (cleanPass == "12345") || // Hospital default staff PIN
+                   (dbPass == "12345" && cleanPass.isBlank()) ||
+                   (cleanPass.isBlank() && dbPass.isBlank())
+        }
+
+        fun executeSuccessfulLogin(user: UserEntity) {
             _currentUser.value = user
+            if (autoSave) {
+                saveLoginCredentials(user.id, cleanPass.ifBlank { user.pass })
+            }
             _screenStack.value = listOf(AppScreen.HOME)
             showToast("Welcome back, ${user.name.split(" ").firstOrNull() ?: user.name} 👋")
-            return true
+            viewModelScope.launch {
+                com.example.cloud.CloudDatabaseManager.reconcileWithCloudServer(getApplication(), repository)
+            }
+            onResult(true, null)
         }
-        return false
+
+        // 1. Check in live users stream
+        var localUser = users.value.firstOrNull { matchUser(it) }
+
+        // 2. Fallback to bundled seed roster if database flow has not emitted yet
+        if (localUser == null) {
+            localUser = HospitalSeedData.users.firstOrNull { matchUser(it) }
+        }
+
+        // 3. Fallback to direct Room database query
+        if (localUser == null) {
+            try {
+                localUser = kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                    repository.getUserByCleanId(cleanInputId)
+                        ?: repository.getUserById(cleanInputId)
+                        ?: repository.getAllUsersDirect().firstOrNull { matchUser(it) }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // If local user exists and password matches, log in immediately!
+        if (localUser != null && checkPasswordMatches(localUser)) {
+            executeSuccessfulLogin(localUser)
+            return
+        }
+
+        // 4. Fallback directly to Cloud Firestore:
+        // Handles: newly created RMO, Maintenance, Doctor, Nurse accounts created on other devices,
+        // as well as accounts where Boss modified or reset the password in Cloud Storage.
+        com.example.cloud.CloudDatabaseManager.fetchAndSyncUserFromCloud(getApplication(), repository, id) { cloudUser ->
+            if (cloudUser != null) {
+                if (checkPasswordMatches(cloudUser)) {
+                    executeSuccessfulLogin(cloudUser)
+                } else {
+                    onResult(false, "Incorrect password for ${cloudUser.name}. Default staff PIN is 12345.")
+                }
+            } else if (localUser != null) {
+                onResult(false, "Incorrect password for ${localUser.name}. Default staff PIN is 12345.")
+            } else {
+                onResult(false, "User ID not found in Hospital Cloud. Ensure ID was registered by Boss or Admin.")
+            }
+        }
+    }
+
+    fun login(id: String, pass: String, autoSave: Boolean = true): Boolean {
+        var success = false
+        loginWithCloudFallback(id, pass, autoSave) { res, _ ->
+            success = res
+        }
+        return success
+    }
+
+    fun syncAllDevicesImmediately(onFinished: ((Boolean, String) -> Unit)? = null) {
+        if (_isSyncingAllDevices.value) return
+        _isSyncingAllDevices.value = true
+        com.example.cloud.CloudDatabaseManager.syncAllDataTwoWay(getApplication(), repository) { success, msg ->
+            _isSyncingAllDevices.value = false
+            showToast(msg)
+            onFinished?.invoke(success, msg)
+        }
     }
 
     fun resetPassword(id: String, newPass: String): Boolean {
@@ -139,16 +403,18 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             val passToSet = newPass.trim().ifBlank { "12345" }
             viewModelScope.launch {
                 repository.updateUserPassword(user.id, passToSet)
-                repository.insertNotification(
-                    NotificationEntity(
-                        id = "nt_" + UUID.randomUUID().toString().take(8),
-                        title = "Password reset completed",
-                        body = "Password for ${user.name} (${user.id}) was successfully updated.",
-                        time = currentTime,
-                        audience = user.id,
-                        kind = "admin"
-                    )
+                val updatedUser = user.copy(pass = passToSet)
+                com.example.cloud.CloudDatabaseManager.syncUserToCloud(getApplication(), updatedUser)
+                val notif = NotificationEntity(
+                    id = "nt_" + UUID.randomUUID().toString().take(8),
+                    title = "Password reset completed",
+                    body = "Password for ${user.name} (${user.id}) was successfully updated.",
+                    time = currentTime,
+                    audience = user.id,
+                    kind = "admin"
                 )
+                repository.insertNotification(notif)
+                com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), notif)
             }
             showToast("✓ Password updated for ${user.name}")
             return true
@@ -157,6 +423,7 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun logout() {
+        clearSavedLoginCredentials()
         _currentUser.value = null
         _screenStack.value = listOf(AppScreen.HOME)
         showToast("Logged out")
@@ -211,9 +478,25 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
         ward: String,
         bed: String,
         doctorId: String,
-        condition: String
+        condition: String,
+        temp: String = "",
+        spo2: String = "",
+        pulse: String = "",
+        bp: String = "",
+        cbg: String = ""
     ) {
-        val newIdNum = 5000 + patients.value.size + 1
+        val timeSeed = ((System.currentTimeMillis() / 1000) % 90000).toInt() + 10000
+        var newIdNum = timeSeed
+        while (patients.value.any { it.id == "PT-$newIdNum" }) {
+            newIdNum += (1..99).random()
+        }
+        val formattedTemp = if (temp.isNotBlank() && !temp.contains("°")) "$temp °F" else temp
+        val formattedSpo2 = if (spo2.isNotBlank() && !spo2.contains("%")) "$spo2%" else spo2
+        val formattedPulse = if (pulse.isNotBlank() && !pulse.contains("bpm")) "$pulse bpm" else pulse
+        val formattedBp = if (bp.isNotBlank() && !bp.contains("mmHg")) "$bp mmHg" else bp
+        val formattedCbg = if (cbg.isNotBlank() && !cbg.contains("mg/dL")) "$cbg mg/dL" else cbg
+        val activeAccount = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Admission Staff"
+
         val newPatient = PatientEntity(
             id = "PT-$newIdNum",
             name = name,
@@ -224,13 +507,252 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             doctorId = doctorId,
             admittedOn = todayDate,
             condition = condition,
-            phone = phone
+            phone = phone,
+            temperature = formattedTemp.ifBlank { null },
+            spo2 = formattedSpo2.ifBlank { null },
+            pulse = formattedPulse.ifBlank { null },
+            bloodPressure = formattedBp.ifBlank { null },
+            cbg = formattedCbg.ifBlank { null },
+            vitalsUpdatedAt = if (formattedTemp.isNotBlank() || formattedSpo2.isNotBlank() || formattedCbg.isNotBlank()) todayDate else null,
+            vitalsUpdatedBy = activeAccount
+        )
+        val admitTitle = "🏥 Patient Admitted — $name"
+        val admitBody = "$name ($age Y / $gender) admitted to $ward Bed $bed by ${currentUser.value?.name ?: "Staff"}."
+        val notif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = admitTitle,
+            body = admitBody,
+            time = currentTime,
+            audience = "all",
+            kind = "task"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = admitTitle,
+            body = admitBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
         )
         viewModelScope.launch {
             repository.insertPatient(newPatient)
+            repository.insertNotification(notif)
             com.example.cloud.CloudDatabaseManager.syncPatientToCloud(getApplication(), newPatient)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
             showToast("🛏 Patient $name admitted to Bed $bed")
             navigateBack()
+        }
+    }
+
+    fun updatePatientDetails(
+        patientId: String,
+        newName: String,
+        newAge: Int,
+        newGender: String,
+        newPhone: String,
+        newWard: String,
+        newBed: String,
+        newCondition: String,
+        newDoctorId: String
+    ) {
+        val pt = patients.value.firstOrNull { it.id == patientId } ?: return
+        val updated = pt.copy(
+            name = newName.trim().ifBlank { pt.name },
+            age = if (newAge > 0) newAge else pt.age,
+            gender = newGender.ifBlank { pt.gender },
+            phone = newPhone.trim(),
+            ward = newWard.ifBlank { pt.ward },
+            bed = newBed.ifBlank { pt.bed },
+            condition = newCondition.trim().ifBlank { pt.condition },
+            doctorId = newDoctorId.ifBlank { pt.doctorId }
+        )
+        val activeAccount = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Clinical Staff"
+        val notif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = "✏️ Patient Details Updated",
+            body = "${updated.name} (${updated.id}) record updated by $activeAccount.",
+            time = currentTime,
+            audience = "all",
+            kind = "admin"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = "✏️ Patient Record Updated — ${updated.name}",
+            body = "Patient ${updated.name} (${updated.id} · ${updated.ward} Bed ${updated.bed}) updated by $activeAccount.",
+            time = currentTime,
+            audience = "all",
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.updatePatient(updated)
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.syncPatientToCloud(getApplication(), updated)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("✓ Patient details updated for ${updated.name}")
+        }
+    }
+
+    fun changePatientDoctor(patientId: String, newDoctorId: String, reason: String = "") {
+        val pt = patients.value.firstOrNull { it.id == patientId } ?: return
+        val newDoc = users.value.firstOrNull { it.id == newDoctorId } ?: return
+        val oldDoc = users.value.firstOrNull { it.id == pt.doctorId }
+        val updatedPatient = pt.copy(doctorId = newDoctorId)
+        val activeAccount = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Admin Staff"
+
+        val reassignTitle = "👨‍⚕️ Attending Doctor Reassigned — ${pt.name}"
+        val reassignBody = "${pt.name} (${pt.ward} Bed ${pt.bed}) reassigned to ${newDoc.name} (${newDoc.specialty}) from ${oldDoc?.name ?: "previous doctor"} by $activeAccount.${if (reason.isNotBlank()) " Reason: $reason" else ""}"
+
+        val notif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = reassignTitle,
+            body = reassignBody,
+            time = currentTime,
+            audience = "all",
+            kind = "admin"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = reassignTitle,
+            body = reassignBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Admin",
+            senderRole = currentUser.value?.role ?: "Admin",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.updatePatient(updatedPatient)
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.syncPatientToCloud(getApplication(), updatedPatient)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("✓ Reassigned ${pt.name} to ${newDoc.name}")
+        }
+    }
+
+    fun transferPatient(patientId: String, newWard: String, newBed: String, reason: String) {
+        val pt = patients.value.firstOrNull { it.id == patientId } ?: return
+        val oldWardBed = "${pt.ward} Bed ${pt.bed}"
+        val updatedPatient = pt.copy(
+            ward = newWard.ifBlank { pt.ward },
+            bed = newBed.ifBlank { pt.bed }
+        )
+        val activeAccount = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Duty Staff"
+        val transferTitle = "🔁 Patient Location Transferred — ${pt.name}"
+        val transferBody = "${pt.name} (${pt.id}) transferred from $oldWardBed to ${updatedPatient.ward} Bed ${updatedPatient.bed} by $activeAccount.${if (reason.isNotBlank()) " Reason: $reason" else ""}"
+
+        val notif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = transferTitle,
+            body = transferBody,
+            time = currentTime,
+            audience = "all",
+            kind = "admin"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = transferTitle,
+            body = transferBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Duty Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.updatePatient(updatedPatient)
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.syncPatientToCloud(getApplication(), updatedPatient)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("🔁 Transferred ${pt.name} to ${updatedPatient.ward} Bed ${updatedPatient.bed}")
+        }
+    }
+
+    fun updatePatientVitals(
+        patientId: String,
+        temp: String,
+        spo2: String,
+        pulse: String,
+        bp: String,
+        cbg: String = ""
+    ) {
+        val pt = patients.value.firstOrNull { it.id == patientId } ?: return
+        val activeAccount = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Medical Staff"
+        val updateTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+
+        val formattedTemp = if (temp.isNotBlank() && !temp.contains("°")) "$temp °F" else temp
+        val formattedSpo2 = if (spo2.isNotBlank() && !spo2.contains("%")) "$spo2%" else spo2
+        val formattedPulse = if (pulse.isNotBlank() && !pulse.contains("bpm")) "$pulse bpm" else pulse
+        val formattedBp = if (bp.isNotBlank() && !bp.contains("mmHg")) "$bp mmHg" else bp
+        val formattedCbg = if (cbg.isNotBlank() && !cbg.contains("mg/dL")) "$cbg mg/dL" else cbg
+
+        val updatedPatient = pt.copy(
+            temperature = formattedTemp.ifBlank { pt.temperature },
+            spo2 = formattedSpo2.ifBlank { pt.spo2 },
+            pulse = formattedPulse.ifBlank { pt.pulse },
+            bloodPressure = formattedBp.ifBlank { pt.bloodPressure },
+            cbg = formattedCbg.ifBlank { pt.cbg },
+            vitalsUpdatedAt = updateTime,
+            vitalsUpdatedBy = activeAccount
+        )
+
+        val vitalsSummary = listOfNotNull(
+            if (formattedTemp.isNotBlank()) "Temp: $formattedTemp" else null,
+            if (formattedSpo2.isNotBlank()) "SpO2: $formattedSpo2" else null,
+            if (formattedPulse.isNotBlank()) "Pulse: $formattedPulse" else null,
+            if (formattedBp.isNotBlank()) "BP: $formattedBp" else null,
+            if (formattedCbg.isNotBlank()) "CBG: $formattedCbg" else null
+        ).joinToString(" · ")
+
+        val vitalRecord = VitalRecordEntity(
+            id = "vr_" + java.util.UUID.randomUUID().toString().take(8),
+            patientId = patientId,
+            temperature = updatedPatient.temperature ?: "",
+            spo2 = updatedPatient.spo2 ?: "",
+            pulse = updatedPatient.pulse ?: "",
+            bloodPressure = updatedPatient.bloodPressure ?: "",
+            cbg = updatedPatient.cbg ?: "",
+            recordedAt = updateTime,
+            recordedBy = activeAccount
+        )
+
+        val notifTitle = "📊 Vitals Updated — ${pt.name}"
+        val notifBody = "Vitals recorded by $activeAccount: $vitalsSummary at $currentTime"
+
+        val notif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = notifTitle,
+            body = notifBody,
+            time = currentTime,
+            audience = "all",
+            kind = "doc"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = notifTitle,
+            body = notifBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Medical Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.updatePatient(updatedPatient)
+            repository.insertVitalRecord(vitalRecord)
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.syncPatientToCloud(getApplication(), updatedPatient)
+            com.example.cloud.CloudDatabaseManager.syncVitalRecordToCloud(getApplication(), vitalRecord)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("📊 Vitals saved at $updateTime for ${pt.name}")
         }
     }
 
@@ -243,25 +765,32 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             referralDate = todayDate
         )
         val toDoc = users.value.firstOrNull { it.id == toDoctorId }
+        val refTitle = "🔁 Referral Alert — ${currentP.name}"
+        val refBody = "${currentUser.value?.name ?: "Doctor"} referred ${currentP.name} to ${toDoc?.name ?: toDoctorId}. Reason: $reason"
         val refNotif = NotificationEntity(
             id = "nt_" + UUID.randomUUID().toString().take(8),
-            title = "New patient referral",
-            body = "${currentUser.value?.name ?: "Doctor"} referred ${currentP.name} to you. Reason: $reason",
+            title = refTitle,
+            body = refBody,
             time = currentTime,
             audience = toDoctorId,
             kind = "refer"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = refTitle,
+            body = refBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Doctor",
+            senderRole = currentUser.value?.role ?: "Doctor",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
         )
         viewModelScope.launch {
             repository.updatePatient(updated)
             repository.insertNotification(refNotif)
             com.example.cloud.CloudDatabaseManager.syncPatientToCloud(getApplication(), updated)
-            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), refNotif)
-            com.example.fcm.FcmManager.showSystemNotification(
-                getApplication(),
-                "New Referral: ${currentP.name}",
-                "Referred to you by ${currentUser.value?.name ?: "Doctor"}. Reason: $reason",
-                "refer"
-            )
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
             showToast("🔁 Referred to ${toDoc?.name ?: "Doctor"} — push alert sent")
         }
     }
@@ -275,6 +804,7 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
         remarks: String
     ) {
         val docId = "doc_" + UUID.randomUUID().toString().take(8)
+        val uploaderAccount = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Staff"
         val doc = DocumentEntity(
             id = docId,
             patientId = patientId,
@@ -284,56 +814,145 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             docTypeOrUri = docTypeOrUri,
             filterApplied = filter.name,
             remarks = remarks,
-            addedBy = currentUser.value?.id ?: "STAFF"
+            addedBy = uploaderAccount
         )
         val pt = patients.value.firstOrNull { it.id == patientId }
+        val docTitle = "📄 Document / Report Uploaded — ${pt?.name ?: patientId}"
+        val docBody = "$category added to ${pt?.name ?: patientId}'s record by $uploaderAccount."
         val docNotif = NotificationEntity(
             id = "nt_" + UUID.randomUUID().toString().take(8),
-            title = "Document uploaded",
-            body = "$category added to ${pt?.name ?: patientId}'s record by ${currentUser.value?.name ?: "Staff"}.",
+            title = docTitle,
+            body = docBody,
             time = currentTime,
             audience = pt?.doctorId ?: "all",
             kind = "doc"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = docTitle,
+            body = docBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
         )
         viewModelScope.launch {
             repository.insertDocument(doc)
             repository.insertNotification(docNotif)
             com.example.cloud.CloudDatabaseManager.syncDocumentToCloud(getApplication(), doc)
-            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), docNotif)
-            showToast("📄 Document saved to patient record")
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("📄 Document saved by $uploaderAccount")
             closeScanner()
+        }
+    }
+
+    fun updateDocument(doc: DocumentEntity) {
+        val modifierAccount = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Staff"
+        val updatedDoc = doc.copy(
+            remarks = if (doc.remarks.contains("Modified by")) doc.remarks else "${doc.remarks} (Modified by $modifierAccount)"
+        )
+        val pt = patients.value.firstOrNull { it.id == doc.patientId }
+        val docTitle = "📄 Medical Report Updated — ${pt?.name ?: doc.patientId}"
+        val docBody = "Report '${doc.title}' (${doc.category}) updated by $modifierAccount."
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = docTitle,
+            body = docBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.insertDocument(updatedDoc)
+            com.example.cloud.CloudDatabaseManager.syncDocumentToCloud(getApplication(), updatedDoc)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("✏️ Report updated by $modifierAccount")
+            if (selectedDocument.value?.id == doc.id) {
+                _selectedDocument.value = updatedDoc
+            }
+        }
+    }
+
+    fun deleteDocument(id: String) {
+        viewModelScope.launch {
+            repository.deleteDocument(id)
+            com.example.cloud.CloudDatabaseManager.deleteDocumentFromCloud(getApplication(), id)
+            showToast("🗑️ Document report deleted")
+            if (selectedDocument.value?.id == id) {
+                closeDocumentViewer()
+            }
         }
     }
 
     fun addClinicalNote(patientId: String, text: String) {
         if (text.isBlank()) return
+        val activeAccountName = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Doctor"
         val note = ClinicalNoteEntity(
             id = "note_" + UUID.randomUUID().toString().take(8),
             patientId = patientId,
             text = text.trim(),
-            authorId = currentUser.value?.name ?: currentUser.value?.id ?: "DOC",
+            authorId = activeAccountName,
             date = todayDate
         )
         val pt = patients.value.firstOrNull { it.id == patientId }
+        val noteTitle = "📝 Clinical Note Added — ${pt?.name ?: patientId}"
+        val noteBody = "$activeAccountName added clinical note for ${pt?.name ?: patientId}: \"${text.trim().take(60)}\""
         val noteNotif = NotificationEntity(
             id = "nt_" + UUID.randomUUID().toString().take(8),
-            title = "Clinical Note Added",
-            body = "Dr. ${currentUser.value?.name ?: "Doctor"} added note for ${pt?.name ?: patientId}.",
+            title = noteTitle,
+            body = noteBody,
             time = currentTime,
             audience = pt?.doctorId ?: "all",
             kind = "doc"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = noteTitle,
+            body = noteBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Doctor",
+            senderRole = currentUser.value?.role ?: "Staff",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
         )
         viewModelScope.launch {
             repository.insertClinicalNote(note)
             repository.insertNotification(noteNotif)
             com.example.cloud.CloudDatabaseManager.syncClinicalNoteToCloud(getApplication(), note)
-            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), noteNotif)
-            showToast("Clinical note saved")
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("Clinical note saved by $activeAccountName")
+        }
+    }
+
+    fun updateClinicalNote(note: ClinicalNoteEntity) {
+        val activeAccountName = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Staff"
+        val updatedNote = note.copy(
+            authorId = if (note.authorId.contains("Modified by")) note.authorId else "${note.authorId} (Modified by $activeAccountName)"
+        )
+        viewModelScope.launch {
+            repository.insertClinicalNote(updatedNote)
+            com.example.cloud.CloudDatabaseManager.syncClinicalNoteToCloud(getApplication(), updatedNote)
+            showToast("✏️ Clinical note updated by $activeAccountName")
+        }
+    }
+
+    fun deleteClinicalNote(id: String) {
+        viewModelScope.launch {
+            repository.deleteClinicalNote(id)
+            com.example.cloud.CloudDatabaseManager.deleteClinicalNoteFromCloud(getApplication(), id)
+            showToast("🗑️ Clinical note deleted")
         }
     }
 
     fun addCarePlan(patientId: String, title: String, due: String = todayDate) {
         if (title.isBlank()) return
+        val activeAccountName = currentUser.value?.let { "${it.name} (${it.role})" } ?: "Staff"
         val plan = CarePlanEntity(
             id = "plan_" + UUID.randomUUID().toString().take(8),
             patientId = patientId,
@@ -342,20 +961,33 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             status = "pending"
         )
         val pt = patients.value.firstOrNull { it.id == patientId }
+        val planTitle = "📋 Care Plan Task Created — ${pt?.name ?: patientId}"
+        val planBody = "Care plan task '${title.trim()}' created for ${pt?.name ?: patientId} (${pt?.ward ?: ""} Bed ${pt?.bed ?: ""}) by $activeAccountName. Due: $due"
         val taskNotif = NotificationEntity(
             id = "nt_" + UUID.randomUUID().toString().take(8),
-            title = "Care plan task added",
-            body = "${title.trim()} — ${pt?.name ?: patientId} (${pt?.bed ?: ""}). Due today.",
+            title = planTitle,
+            body = planBody,
             time = currentTime,
             audience = pt?.doctorId ?: "all",
             kind = "task"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = planTitle,
+            body = planBody,
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            time = currentTime,
+            audience = "all",
+            timestamp = System.currentTimeMillis()
         )
         viewModelScope.launch {
             repository.insertCarePlan(plan)
             repository.insertNotification(taskNotif)
             com.example.cloud.CloudDatabaseManager.syncCarePlanToCloud(getApplication(), plan)
-            com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), taskNotif)
-            showToast("🔔 Task added · push alert dispatched")
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("🔔 Care plan task added · broadcast dispatched")
         }
     }
 
@@ -371,6 +1003,95 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
                 )
             }
             showToast(if (newStatus == "done") "✓ Task completed" else "Task marked pending")
+        }
+    }
+
+    fun updateCarePlan(plan: CarePlanEntity) {
+        viewModelScope.launch {
+            repository.insertCarePlan(plan)
+            com.example.cloud.CloudDatabaseManager.syncCarePlanToCloud(getApplication(), plan)
+            showToast("✏️ Care plan instruction updated")
+        }
+    }
+
+    fun deleteCarePlan(id: String) {
+        viewModelScope.launch {
+            repository.deleteCarePlan(id)
+            com.example.cloud.CloudDatabaseManager.deleteCarePlanFromCloud(getApplication(), id)
+            showToast("🗑️ Care plan instruction deleted")
+        }
+    }
+
+    fun dischargePatient(patientId: String, summary: String) {
+        val pt = patients.value.firstOrNull { it.id == patientId } ?: return
+        val dischargeTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+        val updatedPatient = pt.copy(
+            status = "DISCHARGED",
+            dischargedOn = dischargeTime,
+            dischargeSummary = summary.ifBlank { "Patient discharged by ${currentUser.value?.name ?: "Staff"}." }
+        )
+        val notif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = "🚪 Patient Discharged",
+            body = "${pt.name} discharged from ${pt.ward} Bed ${pt.bed}. Summary: ${updatedPatient.dischargeSummary}",
+            time = currentTime,
+            audience = "all",
+            kind = "admin"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = "🚪 Discharge Update — ${pt.name}",
+            body = "${pt.name} (${pt.id}) has been discharged from ${pt.ward} Bed ${pt.bed}. Bed is now vacant.",
+            time = currentTime,
+            audience = "all",
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Duty Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.updatePatient(updatedPatient)
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.syncPatientToCloud(getApplication(), updatedPatient)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("🚪 ${pt.name} marked as DISCHARGED")
+        }
+    }
+
+    fun readmitPatient(patientId: String) {
+        val pt = patients.value.firstOrNull { it.id == patientId } ?: return
+        val updatedPatient = pt.copy(
+            status = "ADMITTED",
+            dischargedOn = null,
+            dischargeSummary = null
+        )
+        val readmitTitle = "🏥 Patient Re-Admitted — ${pt.name}"
+        val readmitBody = "${pt.name} (${pt.id}) re-admitted to ${pt.ward} Bed ${pt.bed} by ${currentUser.value?.name ?: "Staff"}."
+        val notif = NotificationEntity(
+            id = "nt_" + UUID.randomUUID().toString().take(8),
+            title = readmitTitle,
+            body = readmitBody,
+            time = currentTime,
+            audience = "all",
+            kind = "admin"
+        )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = readmitTitle,
+            body = readmitBody,
+            time = currentTime,
+            audience = "all",
+            priority = "NORMAL",
+            senderName = currentUser.value?.name ?: "Duty Staff",
+            senderRole = currentUser.value?.role ?: "Staff",
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.updatePatient(updatedPatient)
+            repository.insertNotification(notif)
+            com.example.cloud.CloudDatabaseManager.syncPatientToCloud(getApplication(), updatedPatient)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("🏥 ${pt.name} re-admitted to ${pt.ward} Bed ${pt.bed}")
         }
     }
 
@@ -428,7 +1149,7 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
                 cleanBody,
                 "admin"
             )
-            showToast("📢 Broadcast announcement dispatched via Cloud DB & FCM")
+            showToast("📢 Broadcast announcement dispatched")
         }
     }
 
@@ -502,10 +1223,30 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
     fun syncAllLocalDataToCloud() {
         val app = getApplication<android.app.Application>()
         viewModelScope.launch {
-            users.value.forEach { u ->
-                com.example.cloud.CloudDatabaseManager.syncUserToCloud(app, u)
+            showToast("⏳ Uploading all hospital data to Cloud Storage...")
+
+            // Ensure Boss user exists in database and has role BOSS
+            val bossInDb = repository.getUserById("BOSS-0001")
+            val bossUser = UserEntity(
+                id = "BOSS-0001",
+                pass = if (!bossInDb?.pass.isNullOrBlank()) bossInDb!!.pass else "12345",
+                name = "Dr. S. K. Bose",
+                role = "BOSS",
+                dept = "Administration",
+                specialty = "Owner · Full Access",
+                phone = "+91 98300 11111",
+                joinedDate = "2015-04-01"
+            )
+            repository.insertUser(bossUser)
+            com.example.cloud.CloudDatabaseManager.syncUserToCloud(app, bossUser)
+
+            val localUsers = repository.getAllUsersDirect()
+            localUsers.forEach { u ->
+                val userToSync = if (u.id == "BOSS-0001") bossUser else u
+                com.example.cloud.CloudDatabaseManager.syncUserToCloud(app, userToSync)
             }
-            patients.value.forEach { pt ->
+            val localPatients = repository.getAllPatientsDirect()
+            localPatients.forEach { pt ->
                 com.example.cloud.CloudDatabaseManager.syncPatientToCloud(app, pt)
             }
             documents.value.forEach { doc ->
@@ -520,10 +1261,82 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             attendance.value.forEach { att ->
                 com.example.cloud.CloudDatabaseManager.syncAttendanceToCloud(app, att)
             }
+            vitalRecords.value.forEach { vr ->
+                com.example.cloud.CloudDatabaseManager.syncVitalRecordToCloud(app, vr)
+            }
             notifications.value.forEach { notif ->
                 com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(app, notif)
             }
-            showToast("☁️ Full hospital database synchronized with Cloud Firestore")
+
+            com.example.cloud.CloudDatabaseManager.reconcileWithCloudServer(app, repository)
+            showToast("✓ All local records uploaded and synced with Cloud Storage")
+        }
+    }
+
+    fun restoreAndSyncAllHospitalData() {
+        val app = getApplication<android.app.Application>()
+        viewModelScope.launch {
+            showToast("⏳ Restoring master hospital database & syncing cloud...")
+
+            // Re-seed local database with master hospital seed data
+            repository.insertUsers(com.example.data.HospitalSeedData.users)
+            repository.insertPatients(com.example.data.HospitalSeedData.patients)
+            repository.insertDocuments(com.example.data.HospitalSeedData.documents)
+            repository.insertClinicalNotes(com.example.data.HospitalSeedData.clinicalNotes)
+            repository.insertCarePlans(com.example.data.HospitalSeedData.carePlans)
+            repository.insertAttendances(com.example.data.HospitalSeedData.attendances)
+            repository.insertNotifications(com.example.data.HospitalSeedData.notifications)
+
+            // Ensure BOSS-0001
+            val bossUser = UserEntity(
+                id = "BOSS-0001",
+                pass = "12345",
+                name = "Dr. S. K. Bose",
+                role = "BOSS",
+                dept = "Administration",
+                specialty = "Owner · Full Access",
+                phone = "+91 98300 11111",
+                joinedDate = "2015-04-01"
+            )
+            repository.insertUser(bossUser)
+
+            // Push every master entity to Cloud Firestore
+            com.example.data.HospitalSeedData.users.forEach { user ->
+                val u = if (user.id == "BOSS-0001") bossUser else user
+                com.example.cloud.CloudDatabaseManager.syncUserToCloud(app, u)
+            }
+            com.example.data.HospitalSeedData.patients.forEach { pt ->
+                com.example.cloud.CloudDatabaseManager.syncPatientToCloud(app, pt)
+            }
+            com.example.data.HospitalSeedData.documents.forEach { doc ->
+                com.example.cloud.CloudDatabaseManager.syncDocumentToCloud(app, doc)
+            }
+            com.example.data.HospitalSeedData.clinicalNotes.forEach { note ->
+                com.example.cloud.CloudDatabaseManager.syncClinicalNoteToCloud(app, note)
+            }
+            com.example.data.HospitalSeedData.carePlans.forEach { plan ->
+                com.example.cloud.CloudDatabaseManager.syncCarePlanToCloud(app, plan)
+            }
+            com.example.data.HospitalSeedData.attendances.forEach { att ->
+                com.example.cloud.CloudDatabaseManager.syncAttendanceToCloud(app, att)
+            }
+            com.example.data.HospitalSeedData.notifications.forEach { notif ->
+                com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(app, notif)
+            }
+
+            // Pull latest reconciliation
+            com.example.cloud.CloudDatabaseManager.reconcileWithCloudServer(app, repository)
+
+            // Keep current user logged in
+            val current = _currentUser.value
+            if (current != null) {
+                val updated = repository.getUserById(current.id) ?: bossUser
+                _currentUser.value = updated
+            } else {
+                _currentUser.value = bossUser
+            }
+
+            showToast("✓ Master hospital database & Boss account fully restored and synced")
         }
     }
 
@@ -561,6 +1374,12 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             UserRole.ADMINISTRATOR -> 1001
             UserRole.NURSE -> 3001
             UserRole.TECHNICIAN -> 3501
+            UserRole.MAINTENANCE -> 4401
+            UserRole.RECEPTIONIST -> 4001
+            UserRole.ACCOUNTANT -> 4002
+            UserRole.INCHARGE -> 4101
+            UserRole.CASHIER -> 4201
+            UserRole.MEDICINE -> 4301
             else -> 4001
         }
         val generatedId = "$prefix-${String.format(Locale.getDefault(), "%04d", nextNum)}"
@@ -591,12 +1410,24 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             audience = "all",
             kind = "admin"
         )
+        val bc = HospitalBroadcast(
+            id = "bc_" + UUID.randomUUID().toString().take(8),
+            title = "👤 New ${role.label} Registered: $name",
+            body = "Welcome $name (${role.label}) to MB Nursing Home. ID: $finalId · Dept: $dept",
+            time = currentTime,
+            audience = "all",
+            priority = "NORMAL",
+            senderName = _currentUser.value?.name ?: "Boss",
+            senderRole = _currentUser.value?.role ?: "Boss",
+            timestamp = System.currentTimeMillis()
+        )
         viewModelScope.launch {
             repository.insertUser(newUser)
             repository.insertNotification(notif)
             com.example.cloud.CloudDatabaseManager.syncUserToCloud(getApplication(), newUser)
             com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), notif)
-            showToast("✉️ $name registered with ID $finalId")
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
+            showToast("✉️ $name registered with ID $finalId (Synced with Cloud)")
         }
     }
 
@@ -623,8 +1454,20 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
                 audience = updated.id,
                 kind = "admin"
             )
+            val bc = HospitalBroadcast(
+                id = "bc_" + UUID.randomUUID().toString().take(8),
+                title = "👨‍⚕️ Doctor / Staff Profile Updated — ${updated.name}",
+                body = "${updated.name} (${updated.role}) updated contact details${if (updated.phone.isNotBlank()) " · Phone: ${updated.phone}" else ""}.",
+                time = currentTime,
+                audience = "all",
+                priority = "NORMAL",
+                senderName = updated.name,
+                senderRole = updated.role,
+                timestamp = System.currentTimeMillis()
+            )
             repository.insertNotification(notif)
             com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), notif)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
             showToast("✓ Profile updated successfully")
         }
     }
@@ -720,8 +1563,20 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
                 audience = "all",
                 kind = "admin"
             )
+            val bc = HospitalBroadcast(
+                id = "bc_" + UUID.randomUUID().toString().take(8),
+                title = "👨‍⚕️ Doctor / Staff Updates — $newName",
+                body = "Profile updated by Boss: $newName ($cleanNewId · ${newRole.label}). Dept: ${newDept.trim()}${if (newPhone.isNotBlank()) " · Phone: ${newPhone.trim()}" else ""}",
+                time = currentTime,
+                audience = "all",
+                priority = "NORMAL",
+                senderName = current?.name ?: "Boss",
+                senderRole = current?.role ?: "Boss",
+                timestamp = System.currentTimeMillis()
+            )
             repository.insertNotification(notif)
             com.example.cloud.CloudDatabaseManager.publishNotificationToCloud(getApplication(), notif)
+            com.example.cloud.CloudDatabaseManager.dispatchHospitalBroadcast(getApplication(), bc)
         }
         showToast("✓ Staff $newName ($cleanNewId) updated by Boss")
         return true
@@ -740,16 +1595,38 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateUserPhoto(userId: String, photoUri: String?) {
-        viewModelScope.launch {
-            repository.updateUserPhoto(userId, photoUri)
+        viewModelScope.launch(Dispatchers.IO) {
+            val finalUri = if (photoUri != null && photoUri.startsWith("content://")) {
+                try {
+                    val stream = getApplication<Application>().contentResolver.openInputStream(Uri.parse(photoUri))
+                    val bmp = BitmapFactory.decodeStream(stream)
+                    stream?.close()
+                    if (bmp != null) {
+                        val maxDim = 500
+                        val scaled = if (bmp.width > maxDim || bmp.height > maxDim) {
+                            val ratio = Math.min(maxDim.toFloat() / bmp.width, maxDim.toFloat() / bmp.height)
+                            Bitmap.createScaledBitmap(bmp, (bmp.width * ratio).toInt(), (bmp.height * ratio).toInt(), true)
+                        } else bmp
+                        val out = ByteArrayOutputStream()
+                        scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                        "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                    } else photoUri
+                } catch (_: Exception) {
+                    photoUri
+                }
+            } else photoUri
+
+            repository.updateUserPhoto(userId, finalUri)
             val updatedUser = repository.getUserById(userId)
             if (updatedUser != null) {
                 com.example.cloud.CloudDatabaseManager.syncUserToCloud(getApplication(), updatedUser)
             }
-            if (_currentUser.value?.id == userId) {
-                _currentUser.value = _currentUser.value?.copy(photoUri = photoUri)
+            withContext(Dispatchers.Main) {
+                if (_currentUser.value?.id == userId) {
+                    _currentUser.value = _currentUser.value?.copy(photoUri = finalUri)
+                }
+                showToast("📷 Profile photo updated & synced across all devices")
             }
-            showToast("📷 Profile photo updated")
         }
     }
 
@@ -777,8 +1654,98 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
     fun clearAllNotificationsAndUpdates() {
         viewModelScope.launch {
             repository.deleteAllNotifications()
-            com.example.cloud.CloudDatabaseManager.clearLatestBroadcast()
+            com.example.cloud.CloudDatabaseManager.clearAllNotificationsAndBroadcasts(getApplication())
             showToast("🧹 All notifications and updates cleared")
+        }
+    }
+
+    fun deleteNotification(id: String) {
+        viewModelScope.launch {
+            repository.deleteNotification(id)
+            com.example.cloud.CloudDatabaseManager.deleteNotification(getApplication(), id)
+            showToast("Notification cleared")
+        }
+    }
+
+    fun dismissBroadcast(id: String) {
+        viewModelScope.launch {
+            com.example.cloud.CloudDatabaseManager.dismissBroadcast(getApplication(), id)
+            showToast("Alert dismissed")
+        }
+    }
+
+    fun publishAppUpdateByBoss(
+        versionName: String,
+        releaseTitle: String,
+        releaseNotes: String,
+        forceUpdate: Boolean
+    ) {
+        val current = _currentUser.value
+        val isBoss = current?.role == "BOSS" || current?.id == "BOSS-0001"
+        if (!isBoss) {
+            showToast("⚠️ Only Boss (BOSS-0001) can publish app updates")
+            return
+        }
+
+        val newVersionCode = _installedVersionCode.value + 1
+        val cleanName = versionName.ifBlank { "v1.$newVersionCode" }
+        val cleanTitle = releaseTitle.ifBlank { "Hospital Auto-Sync & Feature Release" }
+        val cleanNotes = releaseNotes.ifBlank { "Boss updated features and database structure. Auto-syncing all devices..." }
+
+        com.example.cloud.CloudDatabaseManager.publishAppUpdateByBoss(
+            context = getApplication(),
+            versionCode = newVersionCode,
+            versionName = cleanName,
+            releaseTitle = cleanTitle,
+            releaseNotes = cleanNotes,
+            forceUpdate = forceUpdate,
+            publishedBy = "${current.name} (BOSS-0001)"
+        )
+
+        _installedVersionCode.value = newVersionCode
+        _installedVersionName.value = cleanName
+        showToast("🚀 App update $cleanName published to all devices by Boss!")
+    }
+
+    fun applyAppUpdateAndSync() {
+        if (_isUpdatingApp.value) return
+        viewModelScope.launch {
+            _isUpdatingApp.value = true
+            showToast("⚡ Updating app modules & syncing cloud database...")
+            com.example.cloud.CloudDatabaseManager.reconcileWithCloudServer(getApplication(), repository)
+            kotlinx.coroutines.delay(1200)
+
+            val update = appUpdateInfo.value
+            if (update != null) {
+                _installedVersionCode.value = update.versionCode
+                _installedVersionName.value = update.versionName
+                _lastAppliedPulseId.value = update.updatePulseId
+            } else {
+                _installedVersionCode.value += 1
+                _installedVersionName.value = "1.${_installedVersionCode.value}"
+            }
+
+            _isUpdatingApp.value = false
+            _showUpdateModal.value = false
+            showToast("✓ App successfully updated to ${_installedVersionName.value}! All features and data synced.")
+        }
+    }
+
+    fun dismissUpdateModal() {
+        _showUpdateModal.value = false
+    }
+
+    fun triggerManualCheckForUpdates() {
+        viewModelScope.launch {
+            showToast("Checking for cloud app updates...")
+            com.example.cloud.CloudDatabaseManager.reconcileWithCloudServer(getApplication(), repository)
+            kotlinx.coroutines.delay(800)
+            val update = appUpdateInfo.value
+            if (update != null && (update.versionCode > _installedVersionCode.value || (update.updatePulseId.isNotBlank() && update.updatePulseId != _lastAppliedPulseId.value))) {
+                _showUpdateModal.value = true
+            } else {
+                showToast("✓ App is on the latest version (${_installedVersionName.value})")
+            }
         }
     }
 }

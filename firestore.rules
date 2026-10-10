@@ -33,5 +33,13 @@ service cloud.firestore {
     match /hospital_attendance/{attendanceId} {
       allow read, write: if true;
     }
+
+    match /hospital_vital_records/{recordId} {
+      allow read, write: if true;
+    }
+
+    match /app_config/{configId} {
+      allow read, write: if true;
+    }
   }
 }

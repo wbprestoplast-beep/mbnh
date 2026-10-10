@@ -4,6 +4,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -65,7 +69,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.model.AppScreen
 import com.example.model.UserRole
+import com.example.model.canViewAllStaff
+import androidx.compose.material.icons.filled.People
+import com.example.ui.components.ProfilePictureModal
 import com.example.ui.components.UserAvatar
+import com.example.ui.components.VoiceOutlinedTextField
 import com.example.ui.theme.AppThemeSetting
 import com.example.ui.theme.BrandCyan
 import com.example.ui.theme.BrandTeal
@@ -84,6 +92,7 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
     var showEditProfileModal by remember { mutableStateOf(false) }
     var showChangePasswordModal by remember { mutableStateOf(false) }
     var showDeleteAccountModal by remember { mutableStateOf(false) }
+    var showProfilePictureModal by remember { mutableStateOf(false) }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -113,11 +122,32 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        UserAvatar(
-                            name = currentUser?.name ?: "User",
-                            photoUri = currentUser?.photoUri,
-                            size = 62.dp
-                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { showProfilePictureModal = true }
+                        ) {
+                            UserAvatar(
+                                name = currentUser?.name ?: "User",
+                                photoUri = currentUser?.photoUri,
+                                size = 62.dp
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(BrandTeal)
+                                    .align(Alignment.BottomEnd),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = "Take Selfie or Change Photo",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Row(
@@ -150,18 +180,14 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                             )
                             Text(
                                 text = "📞 ${if (!currentUser?.phone.isNullOrBlank()) currentUser?.phone else "No phone set"}",
-                                fontSize = 11.5.sp,
+                                fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
                         }
 
                         IconButton(
-                            onClick = {
-                                photoPicker.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
+                            onClick = { showProfilePictureModal = true },
                             modifier = Modifier
                                 .size(38.dp)
                                 .clip(RoundedCornerShape(10.dp))
@@ -169,7 +195,7 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         ) {
                             Icon(
                                 imageVector = Icons.Default.CameraAlt,
-                                contentDescription = "Change profile picture",
+                                contentDescription = "Take Selfie / Change profile picture",
                                 tint = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(18.dp)
                             )
@@ -231,7 +257,36 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                             colors = ButtonDefaults.buttonColors(containerColor = MedWarning),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Open Boss Roster & View All Passwords", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                            Text("Open Boss Roster & View All Passwords", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        } else if (currentUser.canViewAllStaff()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.People, contentDescription = null, tint = BrandTeal, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Hospital Staff & Specialist Directory", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("View roster of attending doctors, clinical specialists, nurses, and duty staff.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = { viewModel.pushScreen(AppScreen.ADMIN) },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Open Staff & Doctors Directory", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }
@@ -262,8 +317,8 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("User ID", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                            Text(currentUser?.id ?: "—", fontSize = 12.5.sp, fontWeight = FontWeight.ExtraBold, color = BrandTeal)
+                            Text("User ID", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(currentUser?.id ?: "—", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = BrandTeal)
                         }
                         Box(
                             modifier = Modifier
@@ -284,14 +339,14 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Account Password", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Account Password", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             Text("•••••••• (Encrypted on device)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         OutlinedButton(
                             onClick = { showChangePasswordModal = true },
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Update", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Update", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -304,14 +359,14 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Contact Number", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Contact Number", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             Text(currentUser?.phone?.ifBlank { "Not configured" } ?: "Not configured", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         OutlinedButton(
                             onClick = { showEditProfileModal = true },
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Edit", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Edit", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -350,7 +405,7 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         )
                         Text(
                             text = "Choose light, dark, or system setting",
-                            fontSize = 11.5.sp,
+                            fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 2.dp)
                         )
@@ -365,7 +420,7 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                             FilterChip(
                                 selected = themeSetting == setting,
                                 onClick = { viewModel.setThemeSetting(setting) },
-                                label = { Text(label, fontSize = 11.5.sp) },
+                                label = { Text(label, fontSize = 12.sp) },
                                 shape = RoundedCornerShape(999.dp)
                             )
                         }
@@ -403,7 +458,7 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Offline SQLite Room Cache", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Offline SQLite Room Cache", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             Text("Local persistence active · Instant offline functionality", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Box(
@@ -430,7 +485,7 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Real-Time Multi-Device Cloud Sync", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Real-Time Multi-Device Cloud Sync", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             Text("Firestore live streams & background alert notifications", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Box(
@@ -441,6 +496,95 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         ) {
                             Text("ACTIVE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MedGreen)
                         }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+
+                    // Google Drive Storage Link
+                    val driveStatus by com.example.cloud.GoogleDriveManager.driveSyncStatus.collectAsState()
+                    val driveLastTime by com.example.cloud.GoogleDriveManager.lastDriveSyncTime.collectAsState()
+                    val context = androidx.compose.ui.platform.LocalContext.current
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF16A34A).copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("☁️", fontSize = 18.sp)
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Google Drive Storage Backup", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Linked: mball2k23@gmail.com · Last sync: ${driveLastTime ?: "Ready"}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                com.example.cloud.GoogleDriveManager.syncFullHospitalDataToGoogleDrive(context)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Backup Now", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "APPLICATION & UPDATES",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                letterSpacing = 0.6.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val installedVer by viewModel.installedVersionName.collectAsState()
+                    val cloudUpdate by viewModel.appUpdateInfo.collectAsState()
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Installed App Version: $installedVer",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (cloudUpdate != null) {
+                            Text(
+                                text = "Cloud: ${cloudUpdate?.versionName}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = BrandTeal
+                            )
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = { viewModel.triggerManualCheckForUpdates() },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("check_app_updates_button")
+                    ) {
+                        Text("🚀 Check for Cloud App Updates & New Features", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -479,7 +623,7 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Delete Account", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                            Text("Delete Account", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                             Text("Permanently removes your profile and login ID", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
@@ -502,11 +646,31 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
             }
 
             Spacer(modifier = Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_hospital_logo),
+                    contentDescription = "Company Logo",
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "MB Nursing Home Pvt. Ltd. · Hospital Management System v2.0",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "MB Nursing Home Pvt. Ltd. · Hospital Management System v2.0\n12/3 M.G. Road, Kolkata · Ph: 033-2456-7890",
+                text = "12/3 M.G. Road, Kolkata · Contact: 03340198989, 9073364305",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                lineHeight = 15.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -546,33 +710,36 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("User ID (Locked)") },
-                        supportingText = { Text("User ID is configured exclusively by Boss & Admin", fontSize = 10.5.sp) },
+                        supportingText = { Text("User ID is configured exclusively by Boss & Admin", fontSize = 11.sp) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = nameInput,
                         onValueChange = { nameInput = it },
                         label = { Text("Full Name *") },
+                        speechPrompt = "Speak your full name...",
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = phoneInput,
                         onValueChange = { phoneInput = it },
                         label = { Text("Contact Phone Number") },
+                        speechPrompt = "Speak your contact phone number...",
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = emailInput,
                         onValueChange = { emailInput = it },
                         label = { Text("Email Address (Optional)") },
+                        speechPrompt = "Speak your email address...",
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -637,21 +804,23 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                         modifier = Modifier.padding(top = 2.dp, bottom = 14.dp)
                     )
 
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = currentPassInput,
                         onValueChange = { currentPassInput = it; passError = null },
                         label = { Text("Current Password") },
+                        speechPrompt = "Speak current password...",
                         visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = newPassInput,
                         onValueChange = { newPassInput = it; passError = null },
                         label = { Text("New Password *") },
-                        trailingIcon = {
+                        speechPrompt = "Speak new password...",
+                        customTrailingIcon = {
                             IconButton(onClick = { showPassword = !showPassword }) {
                                 Icon(
                                     imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
@@ -665,10 +834,11 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = confirmPassInput,
                         onValueChange = { confirmPassInput = it; passError = null },
                         label = { Text("Confirm New Password *") },
+                        speechPrompt = "Speak new password again to confirm...",
                         visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -774,5 +944,15 @@ fun SettingsScreen(viewModel: HospitalViewModel) {
                 }
             }
         }
+    }
+
+    if (showProfilePictureModal && currentUser != null) {
+        ProfilePictureModal(
+            targetUserId = currentUser!!.id,
+            userName = currentUser!!.name,
+            currentPhotoUri = currentUser!!.photoUri,
+            viewModel = viewModel,
+            onDismiss = { showProfilePictureModal = false }
+        )
     }
 }

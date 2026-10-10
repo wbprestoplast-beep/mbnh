@@ -59,9 +59,9 @@ fun PlanningsScreen(viewModel: HospitalViewModel) {
     var selectedFilter by remember { mutableStateOf("pending") } // pending, today, done, all
 
     val visiblePatients = if (isDoctor) {
-        patients.filter { it.doctorId == currentUser?.id || it.referralDoctorId == currentUser?.id }
+        patients.filter { !it.status.equals("DISCHARGED", ignoreCase = true) && (it.doctorId == currentUser?.id || it.referralDoctorId == currentUser?.id) }
     } else {
-        patients
+        patients.filter { !it.status.equals("DISCHARGED", ignoreCase = true) }
     }
 
     val allTaskPairs = visiblePatients.flatMap { p ->
@@ -121,7 +121,7 @@ fun PlanningsScreen(viewModel: HospitalViewModel) {
                         Text(
                             text = "No care tasks match this view.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.5.sp
+                            fontSize = 14.sp
                         )
                     }
                 }
@@ -184,7 +184,7 @@ fun PlanningsScreen(viewModel: HospitalViewModel) {
                             ) {
                                 Text(
                                     text = "${patient.name} · Bed ${patient.bed} · Due ${plan.due}",
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 if (isDueToday && !isDone) {
@@ -212,7 +212,7 @@ fun PlanningsScreen(viewModel: HospitalViewModel) {
         item {
             Text(
                 text = "⚡ Status changes apply instantly to the hospital record.",
-                fontSize = 11.5.sp,
+                fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()

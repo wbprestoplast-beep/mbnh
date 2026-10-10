@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import com.example.ui.components.VoiceOutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -65,8 +66,8 @@ fun AdmitPatientScreen(viewModel: HospitalViewModel) {
         it.role.equals("RMO_INCHARGE", ignoreCase = true)
     }
 
-    // Find all free beds
-    val occupiedBedIds = patients.map { it.bed }.toSet()
+    // Find all free beds (excluding discharged patients)
+    val occupiedBedIds = patients.filter { !it.status.equals("DISCHARGED", ignoreCase = true) }.map { it.bed }.toSet()
     val freeBeds = HospitalConstants.WARDS.flatMap { ward ->
         ward.beds.filter { it !in occupiedBedIds }.map { bed -> Pair(ward.name, bed) }
     }
@@ -80,6 +81,11 @@ fun AdmitPatientScreen(viewModel: HospitalViewModel) {
         mutableStateOf(if (isDoctor) currentUser?.id ?: (doctors.firstOrNull()?.id ?: "") else (doctors.firstOrNull()?.id ?: ""))
     }
     var condition by remember { mutableStateOf("") }
+    var tempInput by remember { mutableStateOf("98.6") }
+    var spo2Input by remember { mutableStateOf("98") }
+    var pulseInput by remember { mutableStateOf("72") }
+    var bpInput by remember { mutableStateOf("120/80") }
+    var cbgInput by remember { mutableStateOf("110") }
 
     var isBedDropdownExpanded by remember { mutableStateOf(false) }
     var isDocDropdownExpanded by remember { mutableStateOf(false) }
@@ -107,15 +113,16 @@ fun AdmitPatientScreen(viewModel: HospitalViewModel) {
                     )
                     Text(
                         text = "Enter patient admission and clinical details",
-                        fontSize = 12.5.sp,
+                        fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp, bottom = 16.dp)
                     )
 
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
                         label = { Text("Full Name *") },
+                        speechPrompt = "Speak patient full name...",
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -128,10 +135,11 @@ fun AdmitPatientScreen(viewModel: HospitalViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedTextField(
+                        VoiceOutlinedTextField(
                             value = ageText,
                             onValueChange = { ageText = it },
                             label = { Text("Age") },
+                            speechPrompt = "Speak patient age...",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                             modifier = Modifier
@@ -163,10 +171,11 @@ fun AdmitPatientScreen(viewModel: HospitalViewModel) {
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = phone,
                         onValueChange = { phone = it },
                         label = { Text("Contact Phone") },
+                        speechPrompt = "Speak patient contact phone number...",
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -264,13 +273,73 @@ fun AdmitPatientScreen(viewModel: HospitalViewModel) {
                     )
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    OutlinedTextField(
+                    VoiceOutlinedTextField(
                         value = condition,
                         onValueChange = { condition = it },
                         placeholder = { Text("Initial clinical diagnosis & reason for admission…") },
+                        speechPrompt = "Speak initial clinical diagnosis & admission reason...",
                         minLines = 2,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "INITIAL ADMISSION VITALS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        VoiceOutlinedTextField(
+                            value = tempInput,
+                            onValueChange = { tempInput = it },
+                            label = { Text("Temp (°F)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        VoiceOutlinedTextField(
+                            value = spo2Input,
+                            onValueChange = { spo2Input = it },
+                            label = { Text("SpO2 (%)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        VoiceOutlinedTextField(
+                            value = pulseInput,
+                            onValueChange = { pulseInput = it },
+                            label = { Text("Pulse", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        VoiceOutlinedTextField(
+                            value = bpInput,
+                            onValueChange = { bpInput = it },
+                            label = { Text("BP (mmHg)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        VoiceOutlinedTextField(
+                            value = cbgInput,
+                            onValueChange = { cbgInput = it },
+                            label = { Text("CBG (mg/dL)", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(20.dp))
 
@@ -292,7 +361,12 @@ fun AdmitPatientScreen(viewModel: HospitalViewModel) {
                                         ward = ward,
                                         bed = bed,
                                         doctorId = selectedDoctorId,
-                                        condition = condition.trim().ifBlank { "Observation" }
+                                        condition = condition.trim().ifBlank { "Observation" },
+                                        temp = tempInput.trim(),
+                                        spo2 = spo2Input.trim(),
+                                        pulse = pulseInput.trim(),
+                                        bp = bpInput.trim(),
+                                        cbg = cbgInput.trim()
                                     )
                                 } else {
                                     viewModel.showToast("Name and Bed are required")

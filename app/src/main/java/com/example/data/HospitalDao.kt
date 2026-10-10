@@ -17,6 +17,12 @@ interface HospitalDao {
     @Query("SELECT * FROM users WHERE id = :id LIMIT 1")
     suspend fun getUserById(id: String): UserEntity?
 
+    @Query("SELECT * FROM users WHERE UPPER(REPLACE(REPLACE(id, '-', ''), ' ', '')) = UPPER(REPLACE(REPLACE(:cleanId, '-', ''), ' ', '')) LIMIT 1")
+    suspend fun getUserByCleanId(cleanId: String): UserEntity?
+
+    @Query("SELECT * FROM users ORDER BY id ASC")
+    suspend fun getAllUsersDirect(): List<UserEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUser(user: UserEntity)
 
@@ -38,6 +44,9 @@ interface HospitalDao {
     // Patients
     @Query("SELECT * FROM patients ORDER BY id ASC")
     fun getAllPatients(): Flow<List<PatientEntity>>
+
+    @Query("SELECT * FROM patients ORDER BY id ASC")
+    suspend fun getAllPatientsDirect(): List<PatientEntity>
 
     @Query("SELECT * FROM patients WHERE id = :id LIMIT 1")
     suspend fun getPatientById(id: String): PatientEntity?
@@ -83,6 +92,9 @@ interface HospitalDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertClinicalNotes(notes: List<ClinicalNoteEntity>)
 
+    @Query("DELETE FROM clinical_notes WHERE id = :id")
+    suspend fun deleteClinicalNote(id: String)
+
     // Care Plans
     @Query("SELECT * FROM care_plans ORDER BY due ASC, id ASC")
     fun getAllCarePlans(): Flow<List<CarePlanEntity>>
@@ -99,6 +111,9 @@ interface HospitalDao {
     @Query("UPDATE care_plans SET status = :status WHERE id = :id")
     suspend fun updateCarePlanStatus(id: String, status: String)
 
+    @Query("DELETE FROM care_plans WHERE id = :id")
+    suspend fun deleteCarePlan(id: String)
+
     // Attendance
     @Query("SELECT * FROM attendance ORDER BY date DESC, time DESC")
     fun getAllAttendance(): Flow<List<AttendanceEntity>>
@@ -111,6 +126,22 @@ interface HospitalDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAttendances(attendances: List<AttendanceEntity>)
+
+    // Vital Records
+    @Query("SELECT * FROM vital_records ORDER BY recordedAt DESC, id DESC")
+    fun getAllVitalRecords(): Flow<List<VitalRecordEntity>>
+
+    @Query("SELECT * FROM vital_records WHERE patientId = :patientId ORDER BY recordedAt DESC")
+    fun getVitalRecordsByPatient(patientId: String): Flow<List<VitalRecordEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertVitalRecord(record: VitalRecordEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertVitalRecords(records: List<VitalRecordEntity>)
+
+    @Query("DELETE FROM vital_records WHERE id = :id")
+    suspend fun deleteVitalRecord(id: String)
 
     // Notifications
     @Query("SELECT * FROM notifications ORDER BY id DESC")
@@ -128,7 +159,46 @@ interface HospitalDao {
     @Query("DELETE FROM notifications")
     suspend fun deleteAllNotifications()
 
+    @Query("DELETE FROM notifications WHERE id = :id")
+    suspend fun deleteNotification(id: String)
+
     // Counts for initialization check
     @Query("SELECT COUNT(*) FROM users")
     suspend fun getUsersCount(): Int
+
+    @Query("SELECT * FROM attendance WHERE userId = :userId AND date = :date LIMIT 1")
+    suspend fun getAttendanceByUserAndDate(userId: String, date: String): AttendanceEntity?
+
+    @Query("SELECT id FROM patients")
+    suspend fun getAllPatientIds(): List<String>
+
+    @Query("SELECT id FROM users")
+    suspend fun getAllUserIds(): List<String>
+
+    @Query("SELECT id FROM documents")
+    suspend fun getAllDocumentIds(): List<String>
+
+    @Query("SELECT id FROM clinical_notes")
+    suspend fun getAllClinicalNoteIds(): List<String>
+
+    @Query("SELECT id FROM care_plans")
+    suspend fun getAllCarePlanIds(): List<String>
+
+    @Query("SELECT id FROM vital_records")
+    suspend fun getAllVitalRecordIds(): List<String>
+
+    @Query("SELECT * FROM documents ORDER BY date DESC, id DESC")
+    suspend fun getAllDocumentsDirect(): List<DocumentEntity>
+
+    @Query("SELECT * FROM clinical_notes ORDER BY date DESC, id DESC")
+    suspend fun getAllClinicalNotesDirect(): List<ClinicalNoteEntity>
+
+    @Query("SELECT * FROM care_plans ORDER BY due ASC, id ASC")
+    suspend fun getAllCarePlansDirect(): List<CarePlanEntity>
+
+    @Query("SELECT * FROM vital_records ORDER BY recordedAt DESC, id DESC")
+    suspend fun getAllVitalRecordsDirect(): List<VitalRecordEntity>
+
+    @Query("SELECT * FROM attendance ORDER BY date DESC, time DESC")
+    suspend fun getAllAttendanceDirect(): List<AttendanceEntity>
 }

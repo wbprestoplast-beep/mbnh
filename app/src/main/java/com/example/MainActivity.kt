@@ -24,16 +24,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.fcm.FcmManager
 import com.example.model.AppScreen
 import com.example.model.UserRole
+import com.example.ui.components.AppUpdateOverlay
 import com.example.ui.components.HospitalBottomNav
 import com.example.ui.components.HospitalTopBar
 import com.example.ui.screens.AdminPortalScreen
 import com.example.ui.screens.AdmitPatientScreen
-import com.example.ui.screens.AttendanceScreen
 import com.example.ui.screens.BedsScreen
 import com.example.ui.screens.DocumentScannerModal
 import com.example.ui.screens.DocumentViewerModal
@@ -64,6 +66,21 @@ class MainActivity : ComponentActivity() {
                 HospitalApp(viewModel)
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        com.example.service.AppLifecycleTracker.isAppInForeground = true
+        try {
+            val db = com.example.data.AppDatabase.getDatabase(applicationContext)
+            val repo = com.example.data.HospitalRepository(db.hospitalDao())
+            com.example.cloud.CloudDatabaseManager.reconcileWithCloudServer(applicationContext, repo)
+        } catch (_: Exception) {}
+    }
+
+    override fun onStop() {
+        super.onStop()
+        com.example.service.AppLifecycleTracker.isAppInForeground = false
     }
 }
 
@@ -118,8 +135,13 @@ fun HospitalApp(viewModel: HospitalViewModel) {
         }
     }
 
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
     // Handle back button on secondary screens
     BackHandler(enabled = canNavigateBack) {
+        focusManager.clearFocus()
+        keyboardController?.hide()
         viewModel.navigateBack()
     }
 
@@ -149,7 +171,8 @@ fun HospitalApp(viewModel: HospitalViewModel) {
                     currentUser = currentUser,
                     onBackClick = { viewModel.navigateBack() },
                     onNotificationsClick = { viewModel.pushScreen(AppScreen.NOTIFICATIONS) },
-                    onProfileClick = { viewModel.pushScreen(AppScreen.SETTINGS) }
+                    onProfileClick = { viewModel.pushScreen(AppScreen.SETTINGS) },
+                    onClearNotificationsClick = { viewModel.clearAllNotificationsAndUpdates() }
                 )
             },
             bottomBar = {
@@ -181,7 +204,7 @@ fun HospitalApp(viewModel: HospitalViewModel) {
                     }
                     AppScreen.ADMIT_PATIENT -> AdmitPatientScreen(viewModel = viewModel)
                     AppScreen.BEDS -> BedsScreen(viewModel = viewModel)
-                    AppScreen.ATTENDANCE -> AttendanceScreen(viewModel = viewModel)
+                    AppScreen.ATTENDANCE -> NotificationsScreen(viewModel = viewModel)
                     AppScreen.PLANNINGS -> PlanningsScreen(viewModel = viewModel)
                     AppScreen.ADMIN -> AdminPortalScreen(viewModel = viewModel)
                     AppScreen.NOTIFICATIONS -> NotificationsScreen(viewModel = viewModel)
@@ -202,6 +225,9 @@ fun HospitalApp(viewModel: HospitalViewModel) {
                     viewModel = viewModel
                 )
             }
+
+            // Real-Time App Auto-Update & Feature Overlay
+            AppUpdateOverlay(viewModel = viewModel)
         }
     }
 }

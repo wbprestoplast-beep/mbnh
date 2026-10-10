@@ -51,30 +51,51 @@ fun HospitalBottomNav(
             NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
             NavTabItem(AppScreen.PATIENTS, "Patients", Icons.Filled.People, Icons.Outlined.People),
             NavTabItem(AppScreen.BEDS, "Beds", Icons.Filled.Hotel, Icons.Outlined.Hotel),
-            NavTabItem(AppScreen.ATTENDANCE, "Attendance", Icons.Filled.Fingerprint, Icons.Outlined.Fingerprint),
+            NavTabItem(AppScreen.NOTIFICATIONS, "Broadcasts", Icons.Filled.Campaign, Icons.Outlined.Campaign),
             NavTabItem(AppScreen.PLANNINGS, "Plannings", Icons.Filled.CalendarMonth, Icons.Outlined.CalendarMonth)
         )
-        UserRole.DOCTOR, UserRole.RMO, UserRole.MEDICAL_SUPER, UserRole.RMO_INCHARGE -> listOf(
+        UserRole.RMO, UserRole.RMO_INCHARGE -> listOf(
+            NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
+            NavTabItem(AppScreen.PATIENTS, "Patients", Icons.Filled.People, Icons.Outlined.People),
+            NavTabItem(AppScreen.ADMIN, "Staff", Icons.Filled.People, Icons.Outlined.People),
+            NavTabItem(AppScreen.BEDS, "Beds", Icons.Filled.Hotel, Icons.Outlined.Hotel),
+            NavTabItem(AppScreen.NOTIFICATIONS, "Broadcasts", Icons.Filled.Campaign, Icons.Outlined.Campaign)
+        )
+        UserRole.DOCTOR, UserRole.MEDICAL_SUPER -> listOf(
             NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
             NavTabItem(AppScreen.PATIENTS, "Patients", Icons.Filled.People, Icons.Outlined.People),
             NavTabItem(AppScreen.BEDS, "Beds", Icons.Filled.Hotel, Icons.Outlined.Hotel),
+            NavTabItem(AppScreen.NOTIFICATIONS, "Broadcasts", Icons.Filled.Campaign, Icons.Outlined.Campaign),
             NavTabItem(AppScreen.PLANNINGS, "Plannings", Icons.Filled.CalendarMonth, Icons.Outlined.CalendarMonth)
         )
         UserRole.ADMINISTRATOR -> listOf(
             NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
             NavTabItem(AppScreen.ADMIN, "Staff", Icons.Filled.PersonAdd, Icons.Outlined.PersonAdd),
-            NavTabItem(AppScreen.NOTIFICATIONS, "Alerts", Icons.Filled.Campaign, Icons.Outlined.Campaign)
+            NavTabItem(AppScreen.NOTIFICATIONS, "Broadcasts", Icons.Filled.Campaign, Icons.Outlined.Campaign)
         )
-        UserRole.NURSE, UserRole.TECHNICIAN, UserRole.INCHARGE -> listOf(
+        UserRole.RECEPTIONIST, UserRole.MAINTENANCE, UserRole.ACCOUNTANT, UserRole.CASHIER -> listOf(
+            NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
+            NavTabItem(AppScreen.PATIENTS, "Patients", Icons.Filled.People, Icons.Outlined.People),
+            NavTabItem(AppScreen.ADMIN, "Staff", Icons.Filled.People, Icons.Outlined.People),
+            NavTabItem(AppScreen.NOTIFICATIONS, "Broadcasts", Icons.Filled.Campaign, Icons.Outlined.Campaign)
+        )
+        UserRole.INCHARGE -> listOf(
+            NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
+            NavTabItem(AppScreen.PATIENTS, "Patients", Icons.Filled.People, Icons.Outlined.People),
+            NavTabItem(AppScreen.ADMIN, "Staff", Icons.Filled.People, Icons.Outlined.People),
+            NavTabItem(AppScreen.PLANNINGS, "Tasks", Icons.Filled.CalendarMonth, Icons.Outlined.CalendarMonth),
+            NavTabItem(AppScreen.NOTIFICATIONS, "Broadcasts", Icons.Filled.Campaign, Icons.Outlined.Campaign)
+        )
+        UserRole.NURSE, UserRole.TECHNICIAN -> listOf(
             NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
             NavTabItem(AppScreen.PATIENTS, "Patients", Icons.Filled.People, Icons.Outlined.People),
             NavTabItem(AppScreen.PLANNINGS, "Tasks", Icons.Filled.CalendarMonth, Icons.Outlined.CalendarMonth),
-            NavTabItem(AppScreen.ATTENDANCE, "Attendance", Icons.Filled.Fingerprint, Icons.Outlined.Fingerprint)
+            NavTabItem(AppScreen.NOTIFICATIONS, "Broadcasts", Icons.Filled.Campaign, Icons.Outlined.Campaign)
         )
         else -> listOf(
             NavTabItem(AppScreen.HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
-            NavTabItem(AppScreen.ATTENDANCE, "Attendance", Icons.Filled.Fingerprint, Icons.Outlined.Fingerprint),
-            NavTabItem(AppScreen.NOTIFICATIONS, "Alerts", Icons.Filled.Campaign, Icons.Outlined.Campaign)
+            NavTabItem(AppScreen.PATIENTS, "Patients", Icons.Filled.People, Icons.Outlined.People),
+            NavTabItem(AppScreen.NOTIFICATIONS, "Broadcasts", Icons.Filled.Campaign, Icons.Outlined.Campaign)
         )
     }
 

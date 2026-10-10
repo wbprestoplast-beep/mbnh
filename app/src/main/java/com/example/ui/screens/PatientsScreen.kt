@@ -5,9 +5,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -30,9 +34,9 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import com.example.ui.components.VoiceOutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -56,6 +60,7 @@ import com.example.ui.theme.BrandTeal
 import com.example.ui.theme.MedWarning
 import com.example.ui.viewmodel.HospitalViewModel
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PatientsScreen(viewModel: HospitalViewModel) {
     val currentUser by viewModel.currentUser.collectAsState()
@@ -64,12 +69,13 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
     val documents by viewModel.documents.collectAsState()
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "NURSE")
-    val isDoctor = userRole == UserRole.DOCTOR || userRole == UserRole.RMO || userRole == UserRole.MEDICAL_SUPER || userRole == UserRole.RMO_INCHARGE
+    val isRMO = userRole == UserRole.RMO || userRole == UserRole.RMO_INCHARGE || userRole == UserRole.MEDICAL_SUPER
+    val isDoctorOnly = userRole == UserRole.DOCTOR
     val isBoss = userRole == UserRole.BOSS
-    val isClinical = listOf(UserRole.NURSE, UserRole.TECHNICIAN, UserRole.INCHARGE).contains(userRole)
 
     var searchQuery by remember { mutableStateOf("") }
-    var doctorTab by remember { mutableStateOf("mine") } // "mine" or "referred"
+    var doctorTab by remember { mutableStateOf("all") } // "all", "mine" or "referred"
+    var admissionTab by remember { mutableStateOf("admitted") } // "admitted", "discharged", "all"
     var selectedDoctorFilter by remember { mutableStateOf("all") }
 
     val doctors = users.filter {
@@ -81,16 +87,24 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
 
     val filteredPatients = patients.filter { patient ->
         val assignedDoctor = users.firstOrNull { it.id == patient.doctorId }
+        val isDischarged = patient.status.equals("DISCHARGED", ignoreCase = true)
 
-        // Role-based visibility
-        val roleAllowed = if (isDoctor) {
-            if (doctorTab == "mine") {
-                patient.doctorId == currentUser?.id
-            } else {
-                patient.referralDoctorId == currentUser?.id
-            }
-        } else {
+        // Admission Status Tab filter
+        val statusAllowed = when (admissionTab) {
+            "admitted" -> !isDischarged
+            "discharged" -> isDischarged
+            else -> true
+        }
+
+        // Role-based visibility: doctors can view ALL patients or filter to their own
+        val roleAllowed = if (isRMO || isBoss || !isDoctorOnly) {
             if (selectedDoctorFilter == "all") true else patient.doctorId == selectedDoctorFilter
+        } else {
+            when (doctorTab) {
+                "mine" -> patient.doctorId == currentUser?.id
+                "referred" -> patient.referralDoctorId == currentUser?.id
+                else -> true
+            }
         }
 
         // Search filter
@@ -99,11 +113,11 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
             patient.id.contains(searchQuery, ignoreCase = true) ||
             patient.condition.contains(searchQuery, ignoreCase = true) ||
             patient.bed.contains(searchQuery, ignoreCase = true) ||
-            (assignedDoctor?.name?.contains(searchQuery, ignoreCase = true) == true) ||
-            (assignedDoctor?.dept?.contains(searchQuery, ignoreCase = true) == true)
+            patient.ward.contains(searchQuery, ignoreCase = true) ||
+            (assignedDoctor?.name?.contains(searchQuery, ignoreCase = true) == true)
         )
 
-        roleAllowed && searchAllowed
+        statusAllowed && roleAllowed && searchAllowed
     }
 
     Box(
@@ -118,11 +132,19 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
         ) {
             // Search Input
             item {
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search by name, ID, department or doctor…") },
+                    placeholder = { Text("Search patient by name, ID, ward, or doctor…") },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                    customTrailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    speechPrompt = "Speak patient name, ID, department or doctor to search...",
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -135,53 +157,113 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
                 )
             }
 
-            // Tabs / Filters
+            // Tabs / Filters: Admitted vs Discharged/Left vs All
             item {
-                if (isDoctor) {
-                    Row(
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Admission Status Selector
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         FilterChip(
-                            selected = doctorTab == "mine",
-                            onClick = { doctorTab = "mine" },
-                            label = { Text("My Patients") },
+                            selected = admissionTab == "admitted",
+                            onClick = { admissionTab = "admitted" },
+                            label = {
+                                Text(
+                                    text = "🏥 Admitted (${patients.count { !it.status.equals("DISCHARGED", ignoreCase = true) }})",
+                                    fontSize = 11.5.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
                             shape = RoundedCornerShape(999.dp),
+                            modifier = Modifier.defaultMinSize(minHeight = 38.dp),
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = BrandCyan.copy(alpha = 0.2f),
                                 selectedLabelColor = MaterialTheme.colorScheme.primary
                             )
                         )
                         FilterChip(
-                            selected = doctorTab == "referred",
-                            onClick = { doctorTab = "referred" },
-                            label = { Text("🔁 Referred to Me") },
+                            selected = admissionTab == "discharged",
+                            onClick = { admissionTab = "discharged" },
+                            label = {
+                                Text(
+                                    text = "🚪 Discharged / Left (${patients.count { it.status.equals("DISCHARGED", ignoreCase = true) }})",
+                                    fontSize = 11.5.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
                             shape = RoundedCornerShape(999.dp),
+                            modifier = Modifier.defaultMinSize(minHeight = 38.dp),
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = BrandCyan.copy(alpha = 0.2f),
-                                selectedLabelColor = MaterialTheme.colorScheme.primary
+                                selectedContainerColor = Color(0xFFDC2626).copy(alpha = 0.15f),
+                                selectedLabelColor = Color(0xFFDC2626)
                             )
+                        )
+                        FilterChip(
+                            selected = admissionTab == "all",
+                            onClick = { admissionTab = "all" },
+                            label = {
+                                Text(
+                                    text = "All (${patients.size})",
+                                    fontSize = 11.5.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            modifier = Modifier.defaultMinSize(minWidth = 76.dp, minHeight = 38.dp)
                         )
                     }
-                } else if (isBoss) {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        item {
+
+                    // Doctor Tabs for Specialist Doctors
+                    if (isDoctorOnly) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             FilterChip(
-                                selected = selectedDoctorFilter == "all",
-                                onClick = { selectedDoctorFilter = "all" },
-                                label = { Text("All Doctors") },
+                                selected = doctorTab == "all",
+                                onClick = { doctorTab = "all" },
+                                label = { Text("All Patients (${patients.count { !it.status.equals("DISCHARGED", ignoreCase = true) }})", maxLines = 1, softWrap = false) },
+                                shape = RoundedCornerShape(999.dp)
+                            )
+                            FilterChip(
+                                selected = doctorTab == "mine",
+                                onClick = { doctorTab = "mine" },
+                                label = { Text("My Patients (${patients.count { it.doctorId == currentUser?.id && !it.status.equals("DISCHARGED", ignoreCase = true) }})", maxLines = 1, softWrap = false) },
+                                shape = RoundedCornerShape(999.dp)
+                            )
+                            FilterChip(
+                                selected = doctorTab == "referred",
+                                onClick = { doctorTab = "referred" },
+                                label = { Text("🔁 Referred to Me (${patients.count { it.referralDoctorId == currentUser?.id }})", maxLines = 1, softWrap = false) },
                                 shape = RoundedCornerShape(999.dp)
                             )
                         }
-                        items(doctors) { doc ->
-                            FilterChip(
-                                selected = selectedDoctorFilter == doc.id,
-                                onClick = { selectedDoctorFilter = doc.id },
-                                label = { Text(doc.name.replace("Dr. ", "")) },
-                                shape = RoundedCornerShape(999.dp)
-                            )
+                    } else if (isBoss || isRMO) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            item {
+                                FilterChip(
+                                    selected = selectedDoctorFilter == "all",
+                                    onClick = { selectedDoctorFilter = "all" },
+                                    label = { Text("All Doctors") },
+                                    shape = RoundedCornerShape(999.dp)
+                                )
+                            }
+                            items(doctors) { doc ->
+                                FilterChip(
+                                    selected = selectedDoctorFilter == doc.id,
+                                    onClick = { selectedDoctorFilter = doc.id },
+                                    label = { Text(doc.name.replace("Dr. ", "")) },
+                                    shape = RoundedCornerShape(999.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -202,7 +284,7 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "No patients match the current criteria.",
+                                text = if (admissionTab == "discharged") "No discharged patients match current search." else "No active patients match the current criteria.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 13.5.sp
                             )
@@ -213,7 +295,8 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
                 items(filteredPatients) { patient ->
                     val doc = users.firstOrNull { it.id == patient.doctorId }
                     val patientDocs = documents.filter { it.patientId == patient.id }
-                    val isReferredToMe = isDoctor && patient.referralDoctorId == currentUser?.id && patient.doctorId != currentUser?.id
+                    val isReferredToMe = isDoctorOnly && patient.referralDoctorId == currentUser?.id && patient.doctorId != currentUser?.id
+                    val isDischarged = patient.status.equals("DISCHARGED", ignoreCase = true)
 
                     Card(
                         shape = RoundedCornerShape(16.dp),
@@ -255,7 +338,21 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
-                                        if (isReferredToMe) {
+                                        if (isDischarged) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(999.dp))
+                                                    .background(Color(0xFFDC2626).copy(alpha = 0.15f))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "🚪 DISCHARGED / LEFT",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFFDC2626)
+                                                )
+                                            }
+                                        } else if (isReferredToMe) {
                                             Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(999.dp))
@@ -273,9 +370,10 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
                                     }
 
                                     Text(
-                                        text = "${patient.age}y / ${patient.gender} · ${patient.ward} · Bed ${patient.bed}",
+                                        text = if (isDischarged) "Left ${patient.ward} · Prev Bed ${patient.bed} · ${patient.dischargedOn ?: ""}"
+                                        else "${patient.age}y / ${patient.gender} · ${patient.ward} · Bed ${patient.bed}",
                                         fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = if (isDischarged) Color(0xFFDC2626) else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.padding(top = 2.dp)
                                     )
 
@@ -287,11 +385,22 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
                                         modifier = Modifier.padding(top = 4.dp)
                                     )
 
+                                    if (isDischarged && !patient.dischargeSummary.isNullOrBlank()) {
+                                        Text(
+                                            text = "Summary: ${patient.dischargeSummary}",
+                                            fontSize = 11.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            modifier = Modifier.padding(top = 2.dp)
+                                        )
+                                    }
+
                                     Text(
-                                        text = "Under ${doc?.name ?: "Doctor"} · ${doc?.specialty ?: ""}",
+                                        text = "Doctor: ${doc?.name ?: "—"} (${doc?.specialty ?: ""})",
                                         fontSize = 11.5.sp,
+                                        lineHeight = 17.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = 2.dp)
+                                        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
                                     )
                                 }
 
@@ -321,6 +430,10 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
                                     patientDocs.take(4).forEach { d ->
                                         DocumentCanvasView(
                                             docTypeOrUri = d.docTypeOrUri,
+                                            title = d.title,
+                                            category = d.category,
+                                            patientName = patient.name,
+                                            remarks = d.remarks,
                                             modifier = Modifier
                                                 .size(40.dp)
                                                 .clip(RoundedCornerShape(8.dp))
@@ -344,23 +457,28 @@ fun PatientsScreen(viewModel: HospitalViewModel) {
             }
 
             item {
-                Spacer(modifier = Modifier.height(80.dp))
+                Spacer(modifier = Modifier.height(70.dp))
             }
         }
 
-        // Floating Action Button to Admit Patient
-        if (isBoss || isDoctor || isClinical) {
-            FloatingActionButton(
-                onClick = { viewModel.pushScreen(AppScreen.ADMIT_PATIENT) },
-                containerColor = BrandTeal,
-                contentColor = Color.White,
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = 80.dp, end = 20.dp)
-                    .testTag("fab_admit_patient")
+        // Floating Action Button to Admit New Patient
+        FloatingActionButton(
+            onClick = { viewModel.pushScreen(AppScreen.ADMIT_PATIENT) },
+            containerColor = BrandTeal,
+            contentColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(20.dp)
+                .testTag("admit_patient_fab")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Admit Patient")
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Admit Patient", fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
             }
         }
     }

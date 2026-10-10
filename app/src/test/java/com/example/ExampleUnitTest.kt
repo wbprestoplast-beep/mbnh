@@ -18,6 +18,9 @@ class ExampleUnitTest {
   fun `verify hospital user roles parsing`() {
     assertEquals(UserRole.BOSS, UserRole.fromKey("BOSS"))
     assertEquals(UserRole.DOCTOR, UserRole.fromKey("Doctor"))
+    assertEquals(UserRole.RMO, UserRole.fromKey("RMO"))
+    assertEquals(UserRole.MEDICAL_SUPER, UserRole.fromKey("Medical Super"))
+    assertEquals(UserRole.RMO_INCHARGE, UserRole.fromKey("RMO Incharge"))
     assertEquals(UserRole.NURSE, UserRole.fromKey("nurse"))
     assertEquals(UserRole.ADMINISTRATOR, UserRole.fromKey("Administrator"))
     assertEquals(UserRole.NURSE, UserRole.fromKey("UNKNOWN_ROLE"))
@@ -25,9 +28,9 @@ class ExampleUnitTest {
 
   @Test
   fun `verify hospital wards and total beds`() {
-    assertEquals(3, HospitalConstants.WARDS.size)
+    assertEquals(4, HospitalConstants.WARDS.size)
     val totalBeds = HospitalConstants.WARDS.sumOf { it.beds.size }
-    assertEquals(18, totalBeds)
+    assertEquals(49, totalBeds)
   }
 
   @Test

@@ -1,5 +1,6 @@
 package com.example.fcm
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -34,8 +35,24 @@ object FcmManager {
     const val DEFAULT_TOPIC_BROADCAST = "hospital_broadcasts"
     const val DEFAULT_TOPIC_EMERGENCY = "hospital_emergencies"
 
-    // Unique runtime ID for this phone instance to manage multi-device real-time sync
-    val DEVICE_INSTANCE_ID: String = "dev_" + UUID.randomUUID().toString().take(8)
+    // Persistent unique runtime ID for this phone instance across process lifecycles
+    @Volatile
+    private var persistentDeviceId: String? = null
+
+    fun getDeviceId(context: Context): String {
+        persistentDeviceId?.let { return it }
+        val prefs = context.getSharedPreferences("hms_device_identity", Context.MODE_PRIVATE)
+        var id = prefs.getString("device_id", null)
+        if (id.isNullOrBlank()) {
+            id = "dev_" + UUID.randomUUID().toString().take(8)
+            prefs.edit().putString("device_id", id).apply()
+        }
+        persistentDeviceId = id
+        return id
+    }
+
+    val DEVICE_INSTANCE_ID: String
+        get() = persistentDeviceId ?: "dev_default"
 
     private val _fcmToken = MutableStateFlow<String?>(null)
     val fcmToken: StateFlow<String?> = _fcmToken.asStateFlow()
@@ -51,14 +68,15 @@ object FcmManager {
     }
 
     fun initialize(context: Context) {
+        getDeviceId(context)
         createNotificationChannel(context)
 
         // Provide immediate device endpoint token for Cloud Firestore multi-device message routing
         if (_fcmToken.value == null) {
-            _fcmToken.value = "fcm_cloud_inst_${DEVICE_INSTANCE_ID}"
+            _fcmToken.value = "fcm_cloud_inst_${getDeviceId(context)}"
         }
 
-        Log.d(TAG, "Notification channel and real-time cloud dispatch initialized for device $DEVICE_INSTANCE_ID")
+        Log.d(TAG, "Notification channel and real-time cloud dispatch initialized for device ${getDeviceId(context)}")
     }
 
     fun subscribeToTopic(topic: String) {
@@ -77,6 +95,12 @@ object FcmManager {
             val notificationManager: NotificationManager =
                 context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+            val defaultSoundUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+            val audioAttributes = android.media.AudioAttributes.Builder()
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                .build()
+
             // General Hospital Alerts Channel
             val generalChannel = NotificationChannel(
                 CHANNEL_ID_HOSPITAL,
@@ -85,9 +109,12 @@ object FcmManager {
             ).apply {
                 description = "Notifications for patient updates, routine tasks, and staff announcements."
                 enableLights(true)
+                lightColor = android.graphics.Color.CYAN
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 250, 150, 250)
                 setShowBadge(true)
+                setSound(defaultSoundUri, audioAttributes)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             notificationManager.createNotificationChannel(generalChannel)
 
@@ -99,9 +126,12 @@ object FcmManager {
             ).apply {
                 description = "Critical emergency codes, ICU vital alerts, and hospital-wide urgent broadcasts."
                 enableLights(true)
+                lightColor = android.graphics.Color.RED
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 400, 200, 400, 200, 600)
                 setShowBadge(true)
+                setSound(defaultSoundUri, audioAttributes)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             notificationManager.createNotificationChannel(criticalChannel)
 
@@ -129,6 +159,9 @@ object FcmManager {
         isCritical: Boolean = false
     ) {
         try {
+            // Ensure notification channel is initialized
+            createNotificationChannel(context)
+
             val intent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("from_fcm", true)
@@ -144,20 +177,29 @@ object FcmManager {
             val channelId = if (isCritical) CHANNEL_ID_CRITICAL else CHANNEL_ID_HOSPITAL
             val priority = if (isCritical) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_HIGH
             val vibratePattern = if (isCritical) longArrayOf(0, 400, 200, 400, 200, 600) else longArrayOf(0, 250, 150, 250)
+            val soundUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
 
             val builder = NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(R.drawable.ic_stat_hospital)
                 .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setPriority(priority)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setCategory(if (isCritical) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_EVENT)
                 .setVibrate(vibratePattern)
+                .setSound(soundUri)
                 .setContentIntent(pendingIntent)
                 .setAutoCancel(true)
                 .setDefaults(NotificationCompat.DEFAULT_ALL)
 
-            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+            if (isCritical) {
+                builder.setFullScreenIntent(pendingIntent, true)
+            }
+
+            // Post directly to Android system NotificationManager service
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.notify(notificationId, builder.build())
         } catch (e: SecurityException) {
             Log.w(TAG, "Notification permission not granted: ${e.message}")
         } catch (e: Exception) {

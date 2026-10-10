@@ -20,16 +20,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Hotel
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -38,6 +42,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,6 +50,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import com.example.model.AppScreen
 import com.example.model.HospitalConstants
 import com.example.model.UserRole
+import com.example.model.canViewAllStaff
 import com.example.ui.components.UserAvatar
 import com.example.ui.theme.BrandAccent
 import com.example.ui.theme.BrandCyan
@@ -73,23 +82,31 @@ fun HomeScreen(viewModel: HospitalViewModel) {
     val carePlans by viewModel.carePlans.collectAsState()
     val attendance by viewModel.attendance.collectAsState()
     val latestBroadcast by viewModel.latestBroadcast.collectAsState()
+    val notifications by viewModel.notifications.collectAsState()
+    val isPlayingAudio by viewModel.isPlayingAudio.collectAsState()
+    val currentlyPlayingAudioId by viewModel.currentlyPlayingAudioId.collectAsState()
+
+    var showProfilePhotoModal by remember { mutableStateOf(false) }
 
     val userRole = UserRole.fromKey(currentUser?.role ?: "NURSE")
     val isBoss = userRole == UserRole.BOSS
-    val isDoctor = userRole == UserRole.DOCTOR || userRole == UserRole.RMO || userRole == UserRole.MEDICAL_SUPER || userRole == UserRole.RMO_INCHARGE
+    val isAttendingDoctorOnly = userRole == UserRole.DOCTOR
+    val isRMO = userRole == UserRole.RMO || userRole == UserRole.RMO_INCHARGE
+    val isDoctor = isAttendingDoctorOnly || isRMO || userRole == UserRole.MEDICAL_SUPER
     val isStaffAdmin = isBoss || userRole == UserRole.ADMINISTRATOR
+    val canViewStaffRoster = currentUser.canViewAllStaff()
     val isClinical = listOf(UserRole.NURSE, UserRole.TECHNICIAN, UserRole.INCHARGE).contains(userRole)
 
     val totalBeds = HospitalConstants.WARDS.sumOf { it.beds.size }
-    val occupiedBeds = patients.size
-    val staffOnDuty = attendance.filter { it.date == viewModel.todayDate }.size
+    val occupiedBeds = patients.count { !it.status.equals("DISCHARGED", ignoreCase = true) }
+    val staffOnDuty = attendance.filter { it.date == viewModel.todayDate }.map { it.userId }.distinct().size
     val myCheckIn = attendance.firstOrNull { it.userId == currentUser?.id && it.date == viewModel.todayDate }
 
-    // Visible patients filter: doctors see only their assigned patients or referred patients
-    val visiblePatients = if (isDoctor) {
-        patients.filter { it.doctorId == currentUser?.id || it.referralDoctorId == currentUser?.id }
+    // Visible patients filter: attending specialist doctors see assigned/referred; RMOs and staff see ALL active patients
+    val visiblePatients = if (isAttendingDoctorOnly) {
+        patients.filter { !it.status.equals("DISCHARGED", ignoreCase = true) && (it.doctorId == currentUser?.id || it.referralDoctorId == currentUser?.id) }
     } else {
-        patients
+        patients.filter { !it.status.equals("DISCHARGED", ignoreCase = true) }
     }
 
     val pendingTasks = visiblePatients.flatMap { p ->
@@ -120,11 +137,32 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                         .padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    UserAvatar(
-                        name = currentUser?.name ?: "User",
-                        photoUri = currentUser?.photoUri,
-                        size = 54.dp
-                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { showProfilePhotoModal = true }
+                    ) {
+                        UserAvatar(
+                            name = currentUser?.name ?: "User",
+                            photoUri = currentUser?.photoUri,
+                            size = 54.dp
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(BrandTeal)
+                                .align(Alignment.BottomEnd),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = "Take Selfie or Change Photo",
+                                tint = Color.White,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -168,6 +206,20 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { showProfilePhotoModal = true },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .height(32.dp)
+                                .testTag("home_take_selfie_button")
+                        ) {
+                            Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(13.dp), tint = BrandTeal)
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text("🤳 Take Selfie / Upload Photo", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = BrandTeal)
+                        }
                     }
                 }
             }
@@ -175,7 +227,29 @@ fun HomeScreen(viewModel: HospitalViewModel) {
 
         // Live Emergency & Multi-Phone Hospital Broadcast Ticker
         latestBroadcast?.let { bc ->
-            item {
+            val docPatientNames = patients.filter { it.doctorId == currentUser?.id || it.referralDoctorId == currentUser?.id }
+                .map { it.name.lowercase().trim() }
+            val docPatientBeds = patients.filter { it.doctorId == currentUser?.id || it.referralDoctorId == currentUser?.id }
+                .map { it.bed.lowercase().trim() }
+                .filter { it.isNotBlank() }
+
+            val shouldShow = if (isAttendingDoctorOnly) {
+                val targetedToMe = bc.audience == currentUser?.id
+                val titleLower = bc.title.lowercase()
+                val bodyLower = bc.body.lowercase()
+                val matchesPatient = docPatientNames.any { pName ->
+                    pName.isNotBlank() && (titleLower.contains(pName) || bodyLower.contains(pName))
+                }
+                val matchesBed = docPatientBeds.any { bed ->
+                    titleLower.contains(bed) || bodyLower.contains(bed)
+                }
+                targetedToMe || matchesPatient || matchesBed
+            } else {
+                bc.audience == "all" || bc.audience == currentUser?.id || bc.audience.equals(currentUser?.role, ignoreCase = true) || currentUser?.role?.contains("RMO", ignoreCase = true) == true
+            }
+
+            if (shouldShow) {
+                item {
                 val isEmergency = bc.priority.equals("critical", ignoreCase = true)
                 val isAppUpdate = bc.priority.equals("app_update", ignoreCase = true)
                 val bannerColor = if (isEmergency) Color(0xFFDC2626)
@@ -224,11 +298,27 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                                     fontWeight = FontWeight.ExtraBold,
                                     color = bannerColor
                                 )
-                                Text(
-                                    text = bc.time,
-                                    fontSize = 10.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = bc.time,
+                                        fontSize = 10.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { viewModel.dismissBroadcast(bc.id) },
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .testTag("home_dismiss_broadcast_${bc.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Dismiss Alert",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
                             }
                             Text(
                                 text = bc.title,
@@ -244,11 +334,45 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
+
+                            if (bc.voiceNoteBase64 != null) {
+                                val isPlayingThis = isPlayingAudio && currentlyPlayingAudioId == bc.id
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        if (isPlayingThis) {
+                                            viewModel.stopVoiceMessage()
+                                        } else {
+                                            viewModel.playVoiceMessage(bc.voiceNoteBase64, bc.id)
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier
+                                        .height(30.dp)
+                                        .testTag("listen_broadcast_voice_button")
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                        contentDescription = null,
+                                        tint = bannerColor,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (isPlayingThis) "Stop Voice" else "▶ Hear Voice Message (${if (bc.voiceDurationSec > 0) "${bc.voiceDurationSec}s" else "Audio"})",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = bannerColor
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
 
         // Section: Overview
         item {
@@ -276,7 +400,7 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                 )
                 StatCard(
                     title = if (isDoctor) "MY PATIENTS" else "PATIENTS",
-                    value = "${visiblePatients.size}",
+                    value = "${visiblePatients.count { !it.status.equals("DISCHARGED", ignoreCase = true) }}",
                     valueColor = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier
                         .weight(1f)
@@ -301,13 +425,13 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                     onClick = { viewModel.navigateTo(AppScreen.PLANNINGS) }
                 )
                 StatCard(
-                    title = if (isStaffAdmin) "STAFF ON DUTY" else "MY ATTENDANCE",
-                    value = if (isStaffAdmin) "$staffOnDuty" else (myCheckIn?.time ?: "Not marked"),
-                    valueColor = if (isStaffAdmin || myCheckIn != null) MedGreen else MaterialTheme.colorScheme.error,
+                    title = "BROADCASTS & UPDATES",
+                    value = "${notifications.size}",
+                    valueColor = BrandTeal,
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("stat_attendance_card"),
-                    onClick = { viewModel.navigateTo(AppScreen.ATTENDANCE) }
+                        .testTag("stat_notifications_card"),
+                    onClick = { viewModel.navigateTo(AppScreen.NOTIFICATIONS) }
                 )
             }
         }
@@ -334,7 +458,8 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                     modifier = Modifier.weight(1f),
                     onClick = { viewModel.openScanner() }
                 )
-                if (isBoss || isDoctor || isClinical) {
+                val canAdmit = isBoss || isDoctor || isClinical || userRole == UserRole.RECEPTIONIST
+                if (canAdmit) {
                     QuickActionButton(
                         icon = Icons.Default.PersonAdd,
                         label = "Admit Patient",
@@ -352,30 +477,21 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                         onClick = { viewModel.navigateTo(AppScreen.PATIENTS) }
                     )
                 }
-                if (isStaffAdmin) {
+                if (canViewStaffRoster) {
                     QuickActionButton(
                         icon = Icons.Default.People,
-                        label = if (isBoss) "Admin Portal" else "Staff Directory",
+                        label = if (isBoss) "Admin Portal" else if (isStaffAdmin) "Staff Admin" else "Staff & Doctors",
                         color = Color(0xFF7C3AED),
                         modifier = Modifier.weight(1f),
                         onClick = { viewModel.pushScreen(AppScreen.ADMIN) }
                     )
                 }
-                if (!isStaffAdmin) {
-                    QuickActionButton(
-                        icon = Icons.Default.Fingerprint,
-                        label = "Attendance",
-                        color = MedGreen,
-                        modifier = Modifier.weight(1f),
-                        onClick = { viewModel.navigateTo(AppScreen.ATTENDANCE) }
-                    )
-                }
                 QuickActionButton(
                     icon = Icons.Default.Campaign,
-                    label = "Alerts",
-                    color = MaterialTheme.colorScheme.error,
+                    label = "Broadcasts",
+                    color = BrandTeal,
                     modifier = Modifier.weight(1f),
-                    onClick = { viewModel.pushScreen(AppScreen.NOTIFICATIONS) }
+                    onClick = { viewModel.navigateTo(AppScreen.NOTIFICATIONS) }
                 )
             }
         }
@@ -403,11 +519,11 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                         doctors
                     }
                     val maxCount = maxOf(1, displayedDoctors.maxOfOrNull { d ->
-                        patients.count { it.doctorId == d.id }
+                        patients.count { it.doctorId == d.id && !it.status.equals("DISCHARGED", ignoreCase = true) }
                     } ?: 1)
 
                     displayedDoctors.forEachIndexed { index, doc ->
-                        val count = patients.count { it.doctorId == doc.id }
+                        val count = patients.count { it.doctorId == doc.id && !it.status.equals("DISCHARGED", ignoreCase = true) }
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -417,20 +533,26 @@ fun HomeScreen(viewModel: HospitalViewModel) {
                                 Text(
                                     text = "${doc.name} · ${doc.specialty}",
                                     fontSize = 13.sp,
+                                    lineHeight = 18.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp, bottom = 4.dp)
                                 )
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(999.dp))
                                         .background(BrandCyan.copy(alpha = 0.15f))
-                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
                                         text = "$count bed${if (count != 1) "s" else ""}",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = BrandCyan
+                                        color = BrandCyan,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
@@ -549,6 +671,16 @@ fun HomeScreen(viewModel: HospitalViewModel) {
         item {
             Spacer(modifier = Modifier.height(80.dp))
         }
+    }
+
+    if (showProfilePhotoModal && currentUser != null) {
+        com.example.ui.components.ProfilePictureModal(
+            targetUserId = currentUser!!.id,
+            userName = currentUser!!.name,
+            currentPhotoUri = currentUser!!.photoUri,
+            viewModel = viewModel,
+            onDismiss = { showProfilePhotoModal = false }
+        )
     }
 }
 

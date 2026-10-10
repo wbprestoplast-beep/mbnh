@@ -29,15 +29,22 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockReset
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +52,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import com.example.ui.components.VoiceOutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -56,6 +64,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -77,22 +87,53 @@ import com.example.ui.viewmodel.HospitalViewModel
 fun LoginScreen(viewModel: HospitalViewModel) {
     val users by viewModel.users.collectAsState()
 
-    var userId by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    val savedId = viewModel.savedUserId
+    val savedPass = viewModel.savedPassword
+
+    var userId by remember { mutableStateOf(savedId) }
+    var password by remember { mutableStateOf(savedPass) }
+    var rememberCredentials by remember { mutableStateOf(true) }
     var passwordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var isLoggingIn by remember { mutableStateOf(false) }
+
+    // Auto-reconcile with cloud on Login Screen open and populate remembered credentials
+    LaunchedEffect(savedId, savedPass) {
+        if (savedId.isNotBlank() && userId.isBlank()) {
+            userId = savedId
+        }
+        if (savedPass.isNotBlank() && password.isBlank()) {
+            password = savedPass
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.syncAllDevicesImmediately()
+    }
+
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     fun submitLogin() {
-        if (userId.isBlank() || password.isBlank()) {
-            errorMessage = "Please enter both User ID and Password"
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        val cleanUser = userId.trim()
+        val cleanPass = password.trim()
+        if (cleanUser.isBlank()) {
+            errorMessage = "Please enter your User ID (e.g. DOC-2001, RMO-2101, MNT-4401)"
             return
         }
-        val success = viewModel.login(userId, password)
-        if (!success) {
-            errorMessage = "Invalid User ID or Password. Default password is 12345."
-        } else {
-            errorMessage = null
+        val passToTry = cleanPass.ifBlank { "12345" }
+        isLoggingIn = true
+        errorMessage = null
+        viewModel.loginWithCloudFallback(cleanUser, passToTry, autoSave = rememberCredentials) { success, err ->
+            isLoggingIn = false
+            if (!success) {
+                errorMessage = err ?: "Invalid User ID or Password. Default password for hospital staff is 12345."
+            } else {
+                errorMessage = null
+            }
         }
     }
 
@@ -121,34 +162,41 @@ fun LoginScreen(viewModel: HospitalViewModel) {
                 // Hospital Logo Badge
                 Box(
                     modifier = Modifier
-                        .size(68.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(BrandCyan, BrandAccent)
-                            )
-                        ),
+                        .size(72.dp)
+                        .clip(RoundedCornerShape(20.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.LocalHospital,
-                        contentDescription = "MB Hospital Emblem",
-                        tint = Color.White,
-                        modifier = Modifier.size(40.dp)
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_hospital_logo),
+                        contentDescription = "Hospital Company Logo",
+                        modifier = Modifier.size(72.dp)
                     )
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
-                Text(
-                    text = "MB Nursing Home Pvt. Ltd.",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_hospital_logo),
+                        contentDescription = "Company Logo",
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "MB Nursing Home Pvt. Ltd.",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                }
                 Text(
                     text = "Hospital Management System · Staff & Doctors",
-                    fontSize = 12.5.sp,
+                    fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(top = 4.dp)
@@ -159,7 +207,7 @@ fun LoginScreen(viewModel: HospitalViewModel) {
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                 )
 
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = userId,
                     onValueChange = {
                         userId = it
@@ -176,6 +224,7 @@ fun LoginScreen(viewModel: HospitalViewModel) {
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     ),
                     shape = RoundedCornerShape(12.dp),
+                    speechPrompt = "Speak your User ID (e.g. DOC 2001 or BOSS 0001)...",
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("login_user_id_input")
@@ -183,17 +232,17 @@ fun LoginScreen(viewModel: HospitalViewModel) {
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = password,
                     onValueChange = {
                         password = it
                         errorMessage = null
                     },
-                    label = { Text("Password (Default: 12345)") },
+                    label = { Text("Password") },
                     leadingIcon = {
                         Icon(Icons.Default.Lock, contentDescription = "Password")
                     },
-                    trailingIcon = {
+                    customTrailingIcon = {
                         IconButton(onClick = { passwordVisible = !passwordVisible }) {
                             Icon(
                                 imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
@@ -210,12 +259,13 @@ fun LoginScreen(viewModel: HospitalViewModel) {
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     ),
                     shape = RoundedCornerShape(12.dp),
+                    speechPrompt = "Speak your password to convert voice to text...",
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("login_password_input")
                 )
 
-                // Row with Default Password Hint & Forgot Password Link
+                // Row with Auto-Save Credentials & Forgot Password Link
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -223,11 +273,24 @@ fun LoginScreen(viewModel: HospitalViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Default password: 12345",
-                        fontSize = 11.5.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { rememberCredentials = !rememberCredentials }
+                    ) {
+                        Icon(
+                            imageVector = if (rememberCredentials) Icons.Default.CheckCircle else Icons.Default.HelpOutline,
+                            contentDescription = "Save credentials",
+                            tint = if (rememberCredentials) MedGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (rememberCredentials) "Credentials auto-saved on device" else "Save on device",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (rememberCredentials) MedGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Text(
                         text = "Forgot Password?",
                         fontSize = 12.sp,
@@ -260,76 +323,42 @@ fun LoginScreen(viewModel: HospitalViewModel) {
                     onClick = { submitLogin() },
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
+                    enabled = !isLoggingIn,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
                         .testTag("login_submit_button")
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Login,
-                        contentDescription = "Log In",
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Log In to HMS",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-                Text(
-                    text = "DEMO LOGINS (Password: 12345) — tap to fill",
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val demos = listOf(
-                    Triple("Boss", "BOSS-0001", "12345"),
-                    Triple("Admin", "ADM-1001", "12345"),
-                    Triple("Doctor", "DOC-2001", "12345"),
-                    Triple("Nurse", "NUR-3001", "12345")
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    demos.forEach { (label, demoId, demoPass) ->
-                        FilterChip(
-                            selected = userId == demoId,
-                            onClick = {
-                                userId = demoId
-                                password = demoPass
-                                errorMessage = null
-                            },
-                            label = {
-                                Text(
-                                    text = label,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = BrandCyan.copy(alpha = 0.2f),
-                                selectedLabelColor = MaterialTheme.colorScheme.primary
-                            ),
-                            shape = RoundedCornerShape(999.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("demo_login_$label")
+                    if (isLoggingIn) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Checking Hospital Cloud...",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Login,
+                            contentDescription = "Log In",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Log In to HMS",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = "🔒 Secure internal system. All default accounts initialized with password 12345.",
+                    text = "🔒 Secure internal hospital management system. Credentials are auto-saved on device.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     textAlign = TextAlign.Center
@@ -421,7 +450,7 @@ fun ForgotPasswordDialog(
                 )
 
                 // User ID Input
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = searchId,
                     onValueChange = {
                         searchId = it
@@ -431,38 +460,11 @@ fun ForgotPasswordDialog(
                     placeholder = { Text("e.g. DOC-2001, BOSS-0001") },
                     leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                     singleLine = true,
+                    speechPrompt = "Speak your User ID to verify...",
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("forgot_password_user_id_input")
                 )
-
-                // Quick selector suggestions
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf("DOC-2001", "BOSS-0001", "ADM-1001", "NUR-3001").forEach { demoId ->
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable {
-                                    searchId = demoId
-                                    validationError = null
-                                }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = demoId,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -485,7 +487,7 @@ fun ForgotPasswordDialog(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = matchedUser.name,
-                                        fontSize = 13.5.sp,
+                                        fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
@@ -508,7 +510,7 @@ fun ForgotPasswordDialog(
                 } else if (searchId.isNotBlank()) {
                     Text(
                         text = "User ID '$searchId' not found. Check ID or contact Admin below.",
-                        fontSize = 11.5.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(start = 4.dp)
                     )
@@ -517,7 +519,7 @@ fun ForgotPasswordDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // New Password Field
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = newPassword,
                     onValueChange = {
                         newPassword = it
@@ -525,7 +527,7 @@ fun ForgotPasswordDialog(
                     },
                     label = { Text("New Password *") },
                     leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                    trailingIcon = {
+                    customTrailingIcon = {
                         IconButton(onClick = { isNewPasswordVisible = !isNewPasswordVisible }) {
                             Icon(
                                 imageVector = if (isNewPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
@@ -535,6 +537,7 @@ fun ForgotPasswordDialog(
                     },
                     visualTransformation = if (isNewPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     singleLine = true,
+                    speechPrompt = "Speak your new password...",
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -567,7 +570,7 @@ fun ForgotPasswordDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Confirm Password Field
-                OutlinedTextField(
+                VoiceOutlinedTextField(
                     value = confirmPassword,
                     onValueChange = {
                         confirmPassword = it
@@ -577,6 +580,7 @@ fun ForgotPasswordDialog(
                     leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                     visualTransformation = if (isNewPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     singleLine = true,
+                    speechPrompt = "Speak to confirm your new password...",
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -649,8 +653,8 @@ fun ForgotPasswordDialog(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Contact Rita Sharma (ADM-1001) · Ph: 033-2456-7890",
-                                fontSize = 10.5.sp,
+                                text = "Contact Admin: 03340198989, 9073364305",
+                                fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }

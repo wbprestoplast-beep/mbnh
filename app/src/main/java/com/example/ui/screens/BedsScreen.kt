@@ -59,8 +59,9 @@ fun BedsScreen(viewModel: HospitalViewModel) {
         it.role.equals("RMO_INCHARGE", ignoreCase = true)
     }
 
+    val activePatients = patients.filter { !it.status.equals("DISCHARGED", ignoreCase = true) }
     val totalBeds = HospitalConstants.WARDS.sumOf { it.beds.size }
-    val occupiedBeds = patients.size
+    val occupiedBeds = activePatients.size
     val availableBeds = totalBeds - occupiedBeds
     val occupancyPercent = if (totalBeds > 0) (occupiedBeds.toFloat() / totalBeds.toFloat()) else 0f
 
@@ -102,7 +103,7 @@ fun BedsScreen(viewModel: HospitalViewModel) {
                             }
                             Text(
                                 text = "$availableBeds beds currently available",
-                                fontSize = 12.5.sp,
+                                fontSize = 13.sp,
                                 color = MedGreen,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(top = 2.dp)
@@ -152,7 +153,7 @@ fun BedsScreen(viewModel: HospitalViewModel) {
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     doctors.forEach { doc ->
-                        val docPatients = patients.filter { it.doctorId == doc.id }
+                        val docPatients = activePatients.filter { it.doctorId == doc.id }
                         Card(
                             shape = RoundedCornerShape(14.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -169,13 +170,13 @@ fun BedsScreen(viewModel: HospitalViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = doc.name,
-                                        fontSize = 13.5.sp,
+                                        fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
                                         text = "${doc.specialty} · Beds: ${docPatients.map { it.bed }.joinToString().ifEmpty { "None" }}",
-                                        fontSize = 11.5.sp,
+                                        fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -187,7 +188,7 @@ fun BedsScreen(viewModel: HospitalViewModel) {
                                 ) {
                                     Text(
                                         text = "${docPatients.size} occupied",
-                                        fontSize = 11.5.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = BrandTeal
                                     )
@@ -201,7 +202,7 @@ fun BedsScreen(viewModel: HospitalViewModel) {
 
         // Ward-by-Ward Interactive Bed Grid
         HospitalConstants.WARDS.forEach { ward ->
-            val wardPatients = patients.filter { it.ward == ward.name }
+            val wardPatients = activePatients.filter { it.ward == ward.name }
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -217,7 +218,7 @@ fun BedsScreen(viewModel: HospitalViewModel) {
                     )
                     Text(
                         text = "${wardPatients.size}/${ward.beds.size} occupied",
-                        fontSize = 11.5.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -230,7 +231,7 @@ fun BedsScreen(viewModel: HospitalViewModel) {
                     maxItemsInEachRow = 3
                 ) {
                     ward.beds.forEach { bedCode ->
-                        val pt = patients.firstOrNull { it.bed == bedCode }
+                        val pt = activePatients.firstOrNull { it.bed == bedCode }
                         val isOccupied = pt != null
                         val isDoctorRestricted = isDoctor && pt != null && (pt.doctorId != currentUser?.id && pt.referralDoctorId != currentUser?.id)
                         val attendingDoc = pt?.let { p -> users.firstOrNull { it.id == p.doctorId } }
@@ -297,7 +298,7 @@ fun BedsScreen(viewModel: HospitalViewModel) {
                                     } else {
                                         Text(
                                             text = pt.name,
-                                            fontSize = 10.5.sp,
+                                            fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             maxLines = 1,
                                             color = MaterialTheme.colorScheme.onSurface

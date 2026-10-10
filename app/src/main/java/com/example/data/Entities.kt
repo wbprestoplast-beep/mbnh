@@ -32,7 +32,17 @@ data class PatientEntity(
     val referralDoctorId: String? = null,
     val referralReason: String? = null,
     val referralBy: String? = null,
-    val referralDate: String? = null
+    val referralDate: String? = null,
+    val status: String = "ADMITTED", // "ADMITTED" or "DISCHARGED"
+    val dischargedOn: String? = null,
+    val dischargeSummary: String? = null,
+    val temperature: String? = null,
+    val spo2: String? = null,
+    val pulse: String? = null,
+    val bloodPressure: String? = null,
+    val cbg: String? = null,
+    val vitalsUpdatedAt: String? = null,
+    val vitalsUpdatedBy: String? = null
 )
 
 @Entity(tableName = "documents")
@@ -73,6 +83,19 @@ data class AttendanceEntity(
     val date: String,
     val time: String,
     val method: String // "Biometric" or "Password"
+)
+
+@Entity(tableName = "vital_records")
+data class VitalRecordEntity(
+    @PrimaryKey val id: String,
+    val patientId: String,
+    val temperature: String,
+    val spo2: String,
+    val pulse: String,
+    val bloodPressure: String,
+    val cbg: String = "",
+    val recordedAt: String,
+    val recordedBy: String
 )
 
 @Entity(tableName = "notifications")

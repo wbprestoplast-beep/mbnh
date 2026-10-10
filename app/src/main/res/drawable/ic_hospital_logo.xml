@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    
+    <!-- Shield / Badge background -->
+    <path
+        android:fillColor="#0E7490"
+        android:pathData="M60,8 C85,8 104,22 104,45 C104,78 60,112 60,112 C60,112 16,78 16,45 C16,22 35,8 60,8 Z" />
+        
+    <!-- Inner subtle border outline -->
+    <path
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:pathData="M60,13 C81,13 98,25 98,45 C98,74 60,104 60,104 C60,104 22,74 22,45 C22,25 39,13 60,13 Z" />
+
+    <!-- Medical Cross -->
+    <!-- Vertical bar -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M51,32 H69 V80 H51 Z" />
+    <!-- Horizontal bar -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,47 H84 V65 H36 Z" />
+
+    <!-- Pulse / ECG heartbeat line across the cross in Cyan accent -->
+    <path
+        android:strokeColor="#22D3EE"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M28,56 L44,56 L48,42 L54,70 L62,38 L68,62 L72,56 L92,56" />
+
+    <!-- Small Heart Accent -->
+    <path
+        android:fillColor="#EF4444"
+        android:pathData="M78,32 C78,29 80,27 82.5,27 C84.5,27 85.5,28.5 86,29.5 C86.5,28.5 87.5,27 89.5,27 C92,27 94,29 94,32 C94,35.5 89,39 86,41 C83,39 78,35.5 78,32 Z" />
+</vector>

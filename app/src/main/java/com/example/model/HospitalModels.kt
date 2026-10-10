@@ -18,7 +18,27 @@ enum class UserRole(val label: String, val prefix: String, val colorHex: Long) {
 
     companion object {
         fun fromKey(key: String): UserRole {
-            return entries.firstOrNull { it.name.equals(key, ignoreCase = true) || it.label.equals(key, ignoreCase = true) } ?: NURSE
+            val clean = key.trim().uppercase()
+            if (clean == "BOSS" || clean.contains("BOSS") || clean.contains("OWNER") || clean.contains("DIRECTOR") || clean == "BOSS-0001") return BOSS
+            if (clean == "ADMINISTRATOR" || clean == "ADMIN" || clean.contains("ADMIN")) return ADMINISTRATOR
+            if (clean == "DOCTOR" || clean == "DOC" || clean.contains("DOCTOR") || clean.contains("CARDIOL") || clean.contains("NEUROL") || clean.contains("SURG")) return DOCTOR
+            if (clean == "MEDICAL_SUPER" || clean == "MSU" || clean.contains("SUPER")) return MEDICAL_SUPER
+            if (clean == "RMO_INCHARGE" || clean == "RMI" || (clean.contains("INCHARGE") && clean.contains("RMO"))) return RMO_INCHARGE
+            if (clean == "RMO" || clean.contains("RESIDENT")) return RMO
+            if (clean == "NURSE" || clean == "NUR" || clean.contains("NURS")) return NURSE
+            if (clean == "TECHNICIAN" || clean == "TEC" || clean.contains("TECH") || clean.contains("LAB") || clean.contains("RADIO")) return TECHNICIAN
+            if (clean == "RECEPTIONIST" || clean == "RCP" || clean.contains("RECEPT") || clean.contains("FRONT")) return RECEPTIONIST
+            if (clean == "ACCOUNTANT" || clean == "ACC" || clean.contains("ACCOUNT") || clean.contains("BILL")) return ACCOUNTANT
+            if (clean == "INCHARGE" || clean == "INC" || clean.contains("INCHARGE")) return INCHARGE
+            if (clean == "CASHIER" || clean == "CSH" || clean.contains("CASH")) return CASHIER
+            if (clean == "MEDICINE" || clean == "MED" || clean.contains("PHARM") || clean.contains("MEDIC")) return MEDICINE
+            if (clean == "MAINTENANCE" || clean == "MNT" || clean.contains("MAINT") || clean.contains("FACIL")) return MAINTENANCE
+
+            return entries.firstOrNull { 
+                it.name.equals(key, ignoreCase = true) || 
+                it.label.equals(key, ignoreCase = true) ||
+                it.prefix.equals(key, ignoreCase = true)
+            } ?: NURSE
         }
     }
 }
@@ -112,9 +132,37 @@ object HospitalConstants {
     )
 
     val SPECIALTIES = listOf(
-        "Cardiology", "Neurology", "General Surgery", "Orthopedics",
-        "Pediatrics", "ICU / Critical Care", "General Medicine",
-        "Radiology", "Anesthesiology", "Emergency Medicine", "Gynecology"
+        "Anesthesiologist",
+        "Cardiologist",
+        "Dermatologist",
+        "Endocrinologist",
+        "Gastroenterologist",
+        "General Surgeon",
+        "Gynecologist & Obstetrician",
+        "Hematologist",
+        "Immunologist",
+        "Infectious Disease Specialist",
+        "Nephrologist",
+        "Neurologist",
+        "Neurosurgeon",
+        "Ophthalmologist",
+        "Otolaryngologist (ENT)",
+        "Physical Medicine and Rehabilitation (Physiatrist)",
+        "Plastic / Reconstructive Surgeon",
+        "Pre-Anesthetic Check-up (PAC)",
+        "Psychiatrist",
+        "Pulmonologist",
+        "Reproductive Endocrinologist",
+        "Rheumatologist",
+        "General Medicine / Internal Medicine",
+        "Orthopedics",
+        "Pediatrician",
+        "ICU / Critical Care",
+        "Emergency Medicine",
+        "Oncology",
+        "Urology",
+        "Radiology",
+        "Pathology"
     )
 
     val DEPARTMENTS = listOf(
@@ -123,3 +171,115 @@ object HospitalConstants {
         "Laboratory", "Ward Management"
     )
 }
+
+fun com.example.data.UserEntity?.canEditPatientDetails(): Boolean {
+    if (this == null) return false
+    val r = role.uppercase()
+    return r == "BOSS" ||
+           r == "ADMINISTRATOR" ||
+           r == "ADMIN" ||
+           r == "INCHARGE" ||
+           r == "RMO_INCHARGE" ||
+           r == "RMO" ||
+           r == "MEDICAL_SUPER" ||
+           r.contains("ADMIN") ||
+           r.contains("INCHARGE") ||
+           r.contains("RMO")
+}
+
+fun com.example.data.UserEntity?.canChangeAttendingDoctor(): Boolean {
+    if (this == null) return false
+    val r = role.uppercase()
+    return r == "BOSS" ||
+           r == "ADMINISTRATOR" ||
+           r == "ADMIN" ||
+           r == "INCHARGE" ||
+           r == "RMO_INCHARGE" ||
+           r == "RECEPTIONIST" ||
+           r.contains("ADMIN") ||
+           r.contains("INCHARGE") ||
+           r.contains("RECEPT")
+}
+
+fun com.example.data.UserEntity?.canDischargeAndTransfer(): Boolean {
+    if (this == null) return false
+    val r = role.uppercase()
+    return r == "BOSS" ||
+           r == "ADMINISTRATOR" ||
+           r == "ADMIN" ||
+           r == "INCHARGE" ||
+           r == "RMO_INCHARGE" ||
+           r == "RMO" ||
+           r == "MEDICAL_SUPER" ||
+           r == "RECEPTIONIST" ||
+           r.contains("ADMIN") ||
+           r.contains("INCHARGE") ||
+           r.contains("RMO") ||
+           r.contains("RECEPT")
+}
+
+fun com.example.data.UserEntity?.canViewAllStaff(): Boolean {
+    if (this == null) return false
+    val r = role.uppercase()
+    return r == "BOSS" ||
+           r == "ADMINISTRATOR" ||
+           r == "ADMIN" ||
+           r == "RECEPTIONIST" ||
+           r == "MAINTENANCE" ||
+           r == "ACCOUNTANT" ||
+           r == "ACCOUNTS" ||
+           r == "CASHIER" ||
+           r == "RMO" ||
+           r == "RMO_INCHARGE" ||
+           r == "DOCTOR" ||
+           r == "MEDICAL_SUPER" ||
+           r == "INCHARGE" ||
+           r.contains("ADMIN") ||
+           r.contains("RECEPT") ||
+           r.contains("MAINT") ||
+           r.contains("ACC") ||
+           r.contains("RMO")
+}
+
+fun com.example.data.UserEntity?.canDoctorAddClinicalItems(): Boolean {
+    if (this == null) return false
+    val r = role.uppercase()
+    return r == "DOCTOR" ||
+           r == "RMO" ||
+           r == "RMO_INCHARGE" ||
+           r == "MEDICAL_SUPER" ||
+           r == "BOSS" ||
+           r.contains("DOC") ||
+           r.contains("RMO")
+}
+
+fun com.example.data.UserEntity?.canAddVitalsAndClinicalItems(): Boolean {
+    if (this == null) return false
+    val r = role.uppercase()
+    return r == "NURSE" ||
+           r == "BOSS" ||
+           r == "ADMINISTRATOR" ||
+           r == "ADMIN" ||
+           r == "INCHARGE" ||
+           r == "RMO_INCHARGE" ||
+           r == "RMO" ||
+           r == "DOCTOR" ||
+           r == "MEDICAL_SUPER" ||
+           r.contains("NURS") ||
+           r.contains("ADMIN") ||
+           r.contains("INCHARGE") ||
+           r.contains("RMO") ||
+           r.contains("DOC")
+}
+
+data class AppUpdateInfo(
+    val versionCode: Int = 1,
+    val versionName: String = "1.0",
+    val releaseTitle: String = "App & Feature Release",
+    val releaseNotes: String = "All hospital modules and cloud database sync verified.",
+    val forceUpdate: Boolean = false,
+    val publishedBy: String = "BOSS-0001 (Boss)",
+    val publishedAt: String = "",
+    val updatePulseId: String = ""
+)
+
