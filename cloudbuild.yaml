@@ -1,0 +1,30 @@
+steps:
+  # Step 1: Decode Keystore if base64 file present
+  - name: 'bash'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ -f "debug.keystore.base64" ]; then
+          base64 -d debug.keystore.base64 > debug.keystore
+        fi
+
+  # Step 2: Grant gradlew execute permission
+  - name: 'bash'
+    args: ['chmod', '+x', 'gradlew']
+
+  # Step 3: Build Android APK
+  - name: 'eclipse-temurin:21-jdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - './gradlew assembleDebug --no-daemon'
+
+  # Step 4: Build Docker Container for Web Portal & APK Hosting
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/mb-nursing-home-hms:$COMMIT_SHA', '.']
+
+artifacts:
+  objects:
+    location: 'gs://$_GCS_BUCKET/apks'
+    paths: ['app/build/outputs/apk/debug/*.apk']

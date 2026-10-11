@@ -194,6 +194,7 @@ object CloudDatabaseManager {
                 .setStorageBucket("gen-lang-client-0110759247.firebasestorage.app")
                 .build()
 
+            // Target explicit app initialized with exact project options
             val appName = "HMSCloudApp"
             val app = try {
                 FirebaseApp.getInstance(appName)
@@ -201,8 +202,9 @@ object CloudDatabaseManager {
                 try {
                     FirebaseApp.initializeApp(context.applicationContext, options, appName)
                 } catch (_: Exception) {
-                    if (FirebaseApp.getApps(context).isNotEmpty()) {
-                        FirebaseApp.getInstance()
+                    val defaultApp = try { FirebaseApp.getInstance() } catch (_: Exception) { null }
+                    if (defaultApp != null && defaultApp.options.projectId == CLOUD_PROJECT_ID) {
+                        defaultApp
                     } else {
                         FirebaseApp.initializeApp(context.applicationContext, options)
                     }
@@ -215,15 +217,12 @@ object CloudDatabaseManager {
                 CLOUD_DATABASE_ID
             }
 
+            // Always pass explicit 'app' to ensure we never default to an incorrect external project ID
             val db = try {
                 FirebaseFirestore.getInstance(app, dbId)
             } catch (e: Exception) {
-                Log.w(TAG, "Custom database instance fallback notice: ${e.message}")
-                try {
-                    FirebaseFirestore.getInstance(app)
-                } catch (e2: Exception) {
-                    FirebaseFirestore.getInstance()
-                }
+                Log.w(TAG, "Custom database instance notice (${e.message}), binding to default database on app...")
+                FirebaseFirestore.getInstance(app)
             }
 
             try {
