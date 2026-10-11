@@ -3,9 +3,11 @@ package com.example.model
 enum class UserRole(val label: String, val prefix: String, val colorHex: Long) {
     BOSS("Boss", "BOSS", 0xFFD97706),
     DOCTOR("Doctor", "DOC", 0xFF0E7490),
+    SURGEON("Surgeon", "SRG", 0xFF0D9488),
     RMO("RMO", "RMO", 0xFF0891B2),
     MEDICAL_SUPER("Medical Super", "MSU", 0xFF059669),
     RMO_INCHARGE("RMO Incharge", "RMI", 0xFF0284C7),
+    HEAD_NURSE("Head Nurse", "HNR", 0xFF9333EA),
     NURSE("Nurse", "NUR", 0xFF7C3AED),
     TECHNICIAN("Technician", "TEC", 0xFF0369A1),
     ADMINISTRATOR("Administrator", "ADM", 0xFFB45309),
@@ -14,6 +16,7 @@ enum class UserRole(val label: String, val prefix: String, val colorHex: Long) {
     INCHARGE("Incharge", "INC", 0xFF0F766E),
     CASHIER("Cashier", "CSH", 0xFFA16207),
     MEDICINE("Medicine / Pharmacy", "MED", 0xFFDC2626),
+    PHARMACIST("Pharmacist", "PHM", 0xFFB91C1C),
     MAINTENANCE("Maintenance", "MNT", 0xFF475569);
 
     companion object {
@@ -21,17 +24,20 @@ enum class UserRole(val label: String, val prefix: String, val colorHex: Long) {
             val clean = key.trim().uppercase()
             if (clean == "BOSS" || clean.contains("BOSS") || clean.contains("OWNER") || clean.contains("DIRECTOR") || clean == "BOSS-0001") return BOSS
             if (clean == "ADMINISTRATOR" || clean == "ADMIN" || clean.contains("ADMIN")) return ADMINISTRATOR
-            if (clean == "DOCTOR" || clean == "DOC" || clean.contains("DOCTOR") || clean.contains("CARDIOL") || clean.contains("NEUROL") || clean.contains("SURG")) return DOCTOR
+            if (clean == "SURGEON" || clean == "SRG" || clean.contains("SURG")) return SURGEON
+            if (clean == "DOCTOR" || clean == "DOC" || clean.contains("DOCTOR") || clean.contains("CARDIOL") || clean.contains("NEUROL")) return DOCTOR
             if (clean == "MEDICAL_SUPER" || clean == "MSU" || clean.contains("SUPER")) return MEDICAL_SUPER
             if (clean == "RMO_INCHARGE" || clean == "RMI" || (clean.contains("INCHARGE") && clean.contains("RMO"))) return RMO_INCHARGE
             if (clean == "RMO" || clean.contains("RESIDENT")) return RMO
+            if (clean == "HEAD_NURSE" || clean == "HNR" || clean.contains("HEAD_NURS") || clean.contains("CHARGE_NURS")) return HEAD_NURSE
             if (clean == "NURSE" || clean == "NUR" || clean.contains("NURS")) return NURSE
             if (clean == "TECHNICIAN" || clean == "TEC" || clean.contains("TECH") || clean.contains("LAB") || clean.contains("RADIO")) return TECHNICIAN
             if (clean == "RECEPTIONIST" || clean == "RCP" || clean.contains("RECEPT") || clean.contains("FRONT")) return RECEPTIONIST
             if (clean == "ACCOUNTANT" || clean == "ACC" || clean.contains("ACCOUNT") || clean.contains("BILL")) return ACCOUNTANT
             if (clean == "INCHARGE" || clean == "INC" || clean.contains("INCHARGE")) return INCHARGE
             if (clean == "CASHIER" || clean == "CSH" || clean.contains("CASH")) return CASHIER
-            if (clean == "MEDICINE" || clean == "MED" || clean.contains("PHARM") || clean.contains("MEDIC")) return MEDICINE
+            if (clean == "PHARMACIST" || clean == "PHM" || clean.contains("PHARM")) return PHARMACIST
+            if (clean == "MEDICINE" || clean == "MED" || clean.contains("MEDIC")) return MEDICINE
             if (clean == "MAINTENANCE" || clean == "MNT" || clean.contains("MAINT") || clean.contains("FACIL")) return MAINTENANCE
 
             return entries.firstOrNull { 
@@ -108,21 +114,37 @@ data class HospitalBroadcast(
 object HospitalConstants {
     val WARDS = listOf(
         WardInfo(
-            "ICU",
-            (101..108).map { "$it" }
+            "ICU / Critical Care",
+            (101..110).map { "$it" }
         ),
         WardInfo(
             "Male Ward",
-            (201..211).map { "$it" }
+            (201..212).map { "$it" }
         ),
         WardInfo(
             "Female Ward",
-            (212..224).map { "$it" }
+            (213..225).map { "$it" }
         ),
         WardInfo(
-            "3rd Floor",
+            "Pediatrics Ward",
+            (301..308).map { "$it" }
+        ),
+        WardInfo(
+            "Surgical & Post-Op Ward",
+            (401..410).map { "$it" }
+        ),
+        WardInfo(
+            "Maternity / Obstetric Ward",
+            (501..510).map { "$it" }
+        ),
+        WardInfo(
+            "Emergency / ER",
+            (601..608).map { "$it" }
+        ),
+        WardInfo(
+            "3rd Floor Private Rooms",
             listOf(
-                "301", "302A", "302B", "302C", "302D",
+                "301A", "302A", "302B", "302C", "302D",
                 "303", "304", "305", "306",
                 "307A", "307B", "308",
                 "309A", "309B", "309C",

@@ -38,17 +38,23 @@ object FcmManager {
     // Persistent unique runtime ID for this phone instance across process lifecycles
     @Volatile
     private var persistentDeviceId: String? = null
+    private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(1000)
+
+    fun getNextNotificationId(): Int = notificationIdCounter.incrementAndGet()
 
     fun getDeviceId(context: Context): String {
         persistentDeviceId?.let { return it }
-        val prefs = context.getSharedPreferences("hms_device_identity", Context.MODE_PRIVATE)
-        var id = prefs.getString("device_id", null)
-        if (id.isNullOrBlank()) {
-            id = "dev_" + UUID.randomUUID().toString().take(8)
-            prefs.edit().putString("device_id", id).apply()
+        synchronized(this) {
+            persistentDeviceId?.let { return it }
+            val prefs = context.applicationContext.getSharedPreferences("hms_device_identity", Context.MODE_PRIVATE)
+            var id = prefs.getString("device_id", null)
+            if (id.isNullOrBlank()) {
+                id = "dev_" + java.util.UUID.randomUUID().toString().take(8)
+                prefs.edit().putString("device_id", id).apply()
+            }
+            persistentDeviceId = id
+            return id
         }
-        persistentDeviceId = id
-        return id
     }
 
     val DEVICE_INSTANCE_ID: String
@@ -155,7 +161,7 @@ object FcmManager {
         title: String,
         body: String,
         kind: String = "admin",
-        notificationId: Int = (System.currentTimeMillis() % 100000).toInt(),
+        notificationId: Int = getNextNotificationId(),
         isCritical: Boolean = false
     ) {
         try {

@@ -186,26 +186,46 @@ object CloudDatabaseManager {
         return try {
             FcmManager.initialize(context)
 
-            val app = if (FirebaseApp.getApps(context).isNotEmpty()) {
-                FirebaseApp.getInstance()
-            } else {
-                val options = FirebaseOptions.fromResource(context) ?: FirebaseOptions.Builder()
-                    .setApplicationId(CLOUD_APP_ID)
-                    .setProjectId(CLOUD_PROJECT_ID)
-                    .setApiKey(CLOUD_API_KEY)
-                    .setGcmSenderId("300073810040")
-                    .setStorageBucket("gen-lang-client-0110759247.firebasestorage.app")
-                    .build()
-                FirebaseApp.initializeApp(context.applicationContext, options)
+            val options = FirebaseOptions.Builder()
+                .setApplicationId(CLOUD_APP_ID)
+                .setProjectId(CLOUD_PROJECT_ID)
+                .setApiKey(CLOUD_API_KEY)
+                .setGcmSenderId("300073810040")
+                .setStorageBucket("gen-lang-client-0110759247.firebasestorage.app")
+                .build()
+
+            val appName = "HMSCloudApp"
+            val app = try {
+                FirebaseApp.getInstance(appName)
+            } catch (_: Exception) {
+                try {
+                    FirebaseApp.initializeApp(context.applicationContext, options, appName)
+                } catch (_: Exception) {
+                    if (FirebaseApp.getApps(context).isNotEmpty()) {
+                        FirebaseApp.getInstance()
+                    } else {
+                        FirebaseApp.initializeApp(context.applicationContext, options)
+                    }
+                }
             }
 
             val dbId = try {
-                context.getString(com.example.R.string.firestore_database_id)
+                context.getString(com.example.R.string.firestore_database_id).ifBlank { CLOUD_DATABASE_ID }
             } catch (_: Exception) {
                 CLOUD_DATABASE_ID
             }
 
-            val db = FirebaseFirestore.getInstance(app, dbId)
+            val db = try {
+                FirebaseFirestore.getInstance(app, dbId)
+            } catch (e: Exception) {
+                Log.w(TAG, "Custom database instance fallback notice: ${e.message}")
+                try {
+                    FirebaseFirestore.getInstance(app)
+                } catch (e2: Exception) {
+                    FirebaseFirestore.getInstance()
+                }
+            }
+
             try {
                 val settings = FirebaseFirestoreSettings.Builder()
                     .setPersistenceEnabled(true)
@@ -745,135 +765,133 @@ object CloudDatabaseManager {
         val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
         val currentDeviceId = FcmManager.getDeviceId(context)
 
-        // Stop any existing snapshot listeners cleanly to avoid orphan target IDs on gRPC stream
-        stopListeners()
-
         // Seed cloud from local database if Firestore is freshly provisioned and empty
         seedCloudFromLocalIfEmpty(context, repository)
 
         // 1. Listen for Shared Cloud Notifications & Push Alerts
-        try {
-            notificationListener?.remove()
-            var isInitialNotificationLoad = true
-            notificationListener = db.collection(COLL_NOTIFICATIONS)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("Notification listener notice", error)
-                        return@addSnapshotListener
-                    }
+        if (notificationListener == null) {
+            try {
+                var isInitialNotificationLoad = true
+                notificationListener = db.collection(COLL_NOTIFICATIONS)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("Notification listener notice", error)
+                            return@addSnapshotListener
+                        }
 
-                    if (snapshot != null && !snapshot.isEmpty) {
-                        _isCloudConnected.value = true
-                        _lastSyncTime.value = timeFormat.format(Date())
-                        _cloudSyncStatus.value = "Sync Active · ${snapshot.size()} cloud messages"
+                        if (snapshot != null && !snapshot.isEmpty) {
+                            _isCloudConnected.value = true
+                            _lastSyncTime.value = timeFormat.format(Date())
+                            _cloudSyncStatus.value = "Sync Active · ${snapshot.size()} cloud messages"
 
-                        for (change in snapshot.documentChanges) {
-                            val data = change.document.data
-                            val id = change.document.id
-                            val title = data["title"] as? String ?: "Hospital Alert"
-                            val body = data["body"] as? String ?: ""
-                            val audience = data["audience"] as? String ?: "all"
-                            val time = data["time"] as? String ?: timeFormat.format(Date())
-                            val kind = data["kind"] as? String ?: "admin"
-                            val read = (data["read"] as? Boolean) ?: false
-                            val senderDeviceId = data["senderDeviceId"] as? String ?: data["senderDevice"] as? String ?: ""
-                            val priority = data["priority"] as? String ?: "NORMAL"
-                            val senderName = data["senderName"] as? String ?: "Hospital Staff"
-                            val senderRole = data["senderRole"] as? String ?: "Admin"
-                            val forceAlert = (data["forceAlert"] as? Boolean) ?: false
+                            for (change in snapshot.documentChanges) {
+                                val data = change.document.data
+                                val id = change.document.id
+                                val title = data["title"] as? String ?: "Hospital Alert"
+                                val body = data["body"] as? String ?: ""
+                                val audience = data["audience"] as? String ?: "all"
+                                val time = data["time"] as? String ?: timeFormat.format(Date())
+                                val kind = data["kind"] as? String ?: "admin"
+                                val read = (data["read"] as? Boolean) ?: false
+                                val senderDeviceId = data["senderDeviceId"] as? String ?: data["senderDevice"] as? String ?: ""
+                                val priority = data["priority"] as? String ?: "NORMAL"
+                                val senderName = data["senderName"] as? String ?: "Hospital Staff"
+                                val senderRole = data["senderRole"] as? String ?: "Admin"
+                                val forceAlert = (data["forceAlert"] as? Boolean) ?: false
 
-                            val notifEntity = NotificationEntity(
-                                id = id,
-                                title = title,
-                                body = body,
-                                time = time,
-                                audience = audience,
-                                read = read,
-                                kind = kind
-                            )
-
-                            // Save to local Room database
-                            CoroutineScope(Dispatchers.IO).launch {
-                                repository.insertNotification(notifEntity)
-                            }
-
-                            // If this is a broadcast, update latest banner
-                            if (kind in listOf("admin", "broadcast", "emergency", "app_update")) {
-                                val voiceBase64 = data["voiceNoteBase64"] as? String
-                                val voiceDuration = (data["voiceDurationSec"] as? Long)?.toInt() ?: 0
-                                _latestBroadcast.value = com.example.model.HospitalBroadcast(
+                                val notifEntity = NotificationEntity(
                                     id = id,
                                     title = title,
                                     body = body,
-                                    priority = priority,
-                                    senderName = senderName,
-                                    senderRole = senderRole,
                                     time = time,
                                     audience = audience,
-                                    timestamp = (data["createdAt"] as? Long) ?: System.currentTimeMillis(),
-                                    voiceNoteBase64 = voiceBase64,
-                                    voiceDurationSec = voiceDuration
+                                    read = read,
+                                    kind = kind
                                 )
-                            }
 
-                            val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
-                            if (isInitialNotificationLoad) {
-                                seenNotificationIds.add(id)
-                            } else {
-                                // Instant heads-up notification for real-time incoming alerts from other devices/web
-                                val isFromDifferentDevice = senderDeviceId.isBlank() || senderDeviceId != currentDeviceId
-                                if (isFromDifferentDevice || forceAlert || isBackground) {
-                                    val isCritical = priority.equals("critical", ignoreCase = true) || kind == "emergency"
-                                    FcmManager.showSystemNotification(
-                                        context = context,
-                                        title = (if (isCritical) "🚨 " else "🔔 ") + title,
+                                // Save to local Room database
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    repository.insertNotification(notifEntity)
+                                }
+
+                                // If this is a broadcast, update latest banner
+                                if (kind in listOf("admin", "broadcast", "emergency", "app_update")) {
+                                    val voiceBase64 = data["voiceNoteBase64"] as? String
+                                    val voiceDuration = (data["voiceDurationSec"] as? Long)?.toInt() ?: 0
+                                    _latestBroadcast.value = com.example.model.HospitalBroadcast(
+                                        id = id,
+                                        title = title,
                                         body = body,
-                                        kind = kind,
-                                        isCritical = isCritical
+                                        priority = priority,
+                                        senderName = senderName,
+                                        senderRole = senderRole,
+                                        time = time,
+                                        audience = audience,
+                                        timestamp = (data["createdAt"] as? Long) ?: System.currentTimeMillis(),
+                                        voiceNoteBase64 = voiceBase64,
+                                        voiceDurationSec = voiceDuration
                                     )
                                 }
+
+                                val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
+                                if (isInitialNotificationLoad) {
+                                    seenNotificationIds.add(id)
+                                } else {
+                                    // Instant heads-up notification for real-time incoming alerts from other devices/web
+                                    val isFromDifferentDevice = senderDeviceId.isBlank() || senderDeviceId != currentDeviceId
+                                    if (isFromDifferentDevice || forceAlert || isBackground) {
+                                        val isCritical = priority.equals("critical", ignoreCase = true) || kind == "emergency"
+                                        FcmManager.showSystemNotification(
+                                            context = context,
+                                            title = (if (isCritical) "🚨 " else "🔔 ") + title,
+                                            body = body,
+                                            kind = kind,
+                                            isCritical = isCritical
+                                        )
+                                    }
+                                }
                             }
+                            isInitialNotificationLoad = false
                         }
-                        isInitialNotificationLoad = false
                     }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "Notification listener exception: ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Notification listener exception: ${e.message}")
+            }
         }
 
         // 2. Listen for Shared Patient Admissions & Bed Updates across all devices
-        try {
-            patientListener?.remove()
-            var isInitialPatientLoad = true
-            patientListener = db.collection(COLL_PATIENTS)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("Patient snapshot listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        for (change in snapshot.documentChanges) {
-                            val doc = change.document
-                            val id = doc.id
-                            val senderDeviceId = doc.getString("senderDeviceId") ?: ""
+        if (patientListener == null) {
+            try {
+                var isInitialPatientLoad = true
+                patientListener = db.collection(COLL_PATIENTS)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("Patient snapshot listener notice", error)
+                            return@addSnapshotListener
+                        }
+                        if (snapshot != null) {
+                            for (change in snapshot.documentChanges) {
+                                val doc = change.document
+                                val id = doc.id
+                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
 
-                            if (change.type == DocumentChange.Type.REMOVED) {
-                                val remName = doc.getString("name") ?: doc.getString("patientName") ?: "Patient $id"
-                                val remWard = doc.getString("ward") ?: "General Ward"
-                                val remBed = doc.getString("bed") ?: "Bed"
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    repository.deletePatient(id)
+                                if (change.type == DocumentChange.Type.REMOVED) {
+                                    val remName = doc.getString("name") ?: doc.getString("patientName") ?: "Patient $id"
+                                    val remWard = doc.getString("ward") ?: "General Ward"
+                                    val remBed = doc.getString("bed") ?: "Bed"
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        repository.deletePatient(id)
+                                    }
+                                    if (!isInitialPatientLoad && senderDeviceId != currentDeviceId) {
+                                        FcmManager.showSystemNotification(
+                                            context = context,
+                                            title = "🚪 Patient Record Removed",
+                                            body = "$remName removed from $remWard $remBed",
+                                            kind = "task"
+                                        )
+                                    }
+                                    continue
                                 }
-                                if (!isInitialPatientLoad && senderDeviceId != FcmManager.DEVICE_INSTANCE_ID) {
-                                    FcmManager.showSystemNotification(
-                                        context = context,
-                                        title = "🚪 Patient Record Removed",
-                                        body = "$remName removed from $remWard $remBed",
-                                        kind = "task"
-                                    )
-                                }
-                                continue
-                            }
 
                             val name = doc.getString("name") ?: doc.getString("patientName") ?: doc.getString("fullName") ?: "Patient $id"
                             val age = (doc.get("age") as? Number)?.toInt() ?: (doc.getString("age")?.toIntOrNull()) ?: 0
@@ -965,470 +983,479 @@ object CloudDatabaseManager {
         } catch (e: Exception) {
             Log.w(TAG, "Patient snapshot listener exception: ${e.message}")
         }
+    }
 
         // 3. Listen for Doctors, Staff, and Administrators across all devices
-        try {
-            userListener?.remove()
-            var isInitialUserLoad = true
-            userListener = db.collection(COLL_USERS)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("User snapshot listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        for (change in snapshot.documentChanges) {
-                            val doc = change.document
-                            val id = doc.getString("id") ?: doc.id
-                            val name = doc.getString("name") ?: doc.getString("userName") ?: doc.getString("fullName") ?: id
-                            val role = if (id == "BOSS-0001") "BOSS" else (doc.getString("role") ?: "NURSE")
-                            val dept = doc.getString("dept") ?: doc.getString("department") ?: if (id == "BOSS-0001") "Administration" else "General"
-                            val spec = doc.getString("specialty") ?: if (id == "BOSS-0001") "Owner · Full Access" else "General"
-                            val phone = doc.getString("phone") ?: ""
-                            val email = doc.getString("email") ?: ""
-                            val pass = doc.getString("pass") ?: "12345"
-                            val photoUri = doc.getString("photoUri")?.ifBlank { null }
-                            val joinedDate = doc.getString("joinedDate") ?: doc.getString("joiningDate") ?: "2026-01-01"
-                            val senderDeviceId = doc.getString("senderDeviceId") ?: ""
+        if (userListener == null) {
+            try {
+                var isInitialUserLoad = true
+                userListener = db.collection(COLL_USERS)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("User snapshot listener notice", error)
+                            return@addSnapshotListener
+                        }
+                        if (snapshot != null) {
+                            for (change in snapshot.documentChanges) {
+                                val doc = change.document
+                                val id = doc.getString("id") ?: doc.id
+                                val name = doc.getString("name") ?: doc.getString("userName") ?: doc.getString("fullName") ?: id
+                                val role = if (id == "BOSS-0001") "BOSS" else (doc.getString("role") ?: "NURSE")
+                                val dept = doc.getString("dept") ?: doc.getString("department") ?: if (id == "BOSS-0001") "Administration" else "General"
+                                val spec = doc.getString("specialty") ?: if (id == "BOSS-0001") "Owner · Full Access" else "General"
+                                val phone = doc.getString("phone") ?: ""
+                                val email = doc.getString("email") ?: ""
+                                val pass = doc.getString("pass") ?: "12345"
+                                val photoUri = doc.getString("photoUri")?.ifBlank { null }
+                                val joinedDate = doc.getString("joinedDate") ?: doc.getString("joiningDate") ?: "2026-01-01"
+                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
 
-                            if (change.type == DocumentChange.Type.REMOVED) {
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    repository.deleteUser(id)
+                                if (change.type == DocumentChange.Type.REMOVED) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        repository.deleteUser(id)
+                                    }
+                                    if (!isInitialUserLoad && senderDeviceId != currentDeviceId) {
+                                        FcmManager.showSystemNotification(
+                                            context = context,
+                                            title = "👤 Staff Roster Updated",
+                                            body = "$name ($role) removed from staff registry",
+                                            kind = "admin"
+                                        )
+                                    }
+                                    continue
                                 }
+
+                                val user = UserEntity(
+                                    id = id,
+                                    pass = pass,
+                                    name = name,
+                                    role = role,
+                                    dept = dept,
+                                    specialty = spec,
+                                    phone = phone,
+                                    email = email,
+                                    photoUri = photoUri,
+                                    joinedDate = joinedDate
+                                )
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    repository.insertUser(user)
+                                }
+
                                 if (!isInitialUserLoad && senderDeviceId != currentDeviceId) {
+                                    val title = if (change.type == DocumentChange.Type.ADDED) {
+                                        "👤 New Staff Registered: $name"
+                                    } else {
+                                        "👤 Staff Profile Updated: $name"
+                                    }
                                     FcmManager.showSystemNotification(
                                         context = context,
-                                        title = "👤 Staff Roster Updated",
-                                        body = "$name ($role) removed from staff registry",
+                                        title = title,
+                                        body = "$role · Department: $dept · Login ID: $id",
                                         kind = "admin"
                                     )
                                 }
-                                continue
                             }
-
-                            val user = UserEntity(
-                                id = id,
-                                pass = pass,
-                                name = name,
-                                role = role,
-                                dept = dept,
-                                specialty = spec,
-                                phone = phone,
-                                email = email,
-                                photoUri = photoUri,
-                                joinedDate = joinedDate
-                            )
-                            CoroutineScope(Dispatchers.IO).launch {
-                                repository.insertUser(user)
-                            }
-
-                            if (!isInitialUserLoad && senderDeviceId != currentDeviceId) {
-                                val title = if (change.type == DocumentChange.Type.ADDED) {
-                                    "👤 New Staff Registered: $name"
-                                } else {
-                                    "👤 Staff Profile Updated: $name"
-                                }
-                                FcmManager.showSystemNotification(
-                                    context = context,
-                                    title = title,
-                                    body = "$role · Department: $dept · Login ID: $id",
-                                    kind = "admin"
-                                )
-                            }
+                            isInitialUserLoad = false
                         }
-                        isInitialUserLoad = false
                     }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "User snapshot listener exception: ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "User snapshot listener exception: ${e.message}")
+            }
         }
 
         // 4. Listen for Medical Documents, Reports, and Scans across all devices
-        try {
-            documentListener?.remove()
-            var isInitialDocLoad = true
-            documentListener = db.collection(COLL_DOCUMENTS)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("Document snapshot listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        for (change in snapshot.documentChanges) {
-                            val doc = change.document
-                            val id = doc.id
-                            val senderDeviceId = doc.getString("senderDeviceId") ?: ""
-
-                            if (change.type == DocumentChange.Type.REMOVED) {
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    repository.deleteDocument(id)
-                                }
-                                continue
-                            }
-
-                            val patientId = doc.getString("patientId") ?: doc.getString("patient_id") ?: "General"
-                            val title = doc.getString("title") ?: "Document"
-                            val category = doc.getString("category") ?: "Medical Report"
-                            val date = doc.getString("date") ?: doc.getString("timestamp") ?: timeFormat.format(Date())
-                            val docTypeOrUri = doc.getString("docTypeOrUri") ?: doc.getString("previewBase64") ?: "SEED_LAB"
-                            val filterApplied = doc.getString("filterApplied") ?: "ORIGINAL"
-                            val remarks = doc.getString("remarks") ?: doc.getString("notes") ?: ""
-                            val addedBy = doc.getString("addedBy") ?: doc.getString("doctorName") ?: "Staff"
-
-                            val document = DocumentEntity(
-                                id = id,
-                                patientId = patientId,
-                                title = title,
-                                category = category,
-                                date = date,
-                                docTypeOrUri = docTypeOrUri,
-                                filterApplied = filterApplied,
-                                remarks = remarks,
-                                addedBy = addedBy
-                            )
-                            CoroutineScope(Dispatchers.IO).launch {
-                                repository.insertDocument(document)
-                            }
-
-                            // Alert if a new or updated medical report, prescription, or scan was uploaded
-                            val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
-                            if (!isInitialDocLoad &&
-                                (senderDeviceId != currentDeviceId || isBackground) &&
-                                !seenNotificationIds.contains(id)
-                            ) {
-                                seenNotificationIds.add(id)
-                                val alertTitle = if (change.type == DocumentChange.Type.ADDED) "📄 New $category Uploaded" else "📄 $category Updated"
-                                FcmManager.showSystemNotification(
-                                    context = context,
-                                    title = alertTitle,
-                                    body = "$title for Patient $patientId by $addedBy",
-                                    kind = "doc"
-                                )
-                            }
+        if (documentListener == null) {
+            try {
+                var isInitialDocLoad = true
+                documentListener = db.collection(COLL_DOCUMENTS)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("Document snapshot listener notice", error)
+                            return@addSnapshotListener
                         }
-                        isInitialDocLoad = false
-                    }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "Document listener exception: ${e.message}")
-        }
-
-        // 5. Listen for Clinical Observations & Doctor Progress Notes
-        try {
-            clinicalNoteListener?.remove()
-            var isInitialNotesLoad = true
-            clinicalNoteListener = db.collection(COLL_CLINICAL_NOTES)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("Clinical notes listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        for (change in snapshot.documentChanges) {
-                            val doc = change.document
-                            val id = doc.id
-                            if (change.type == DocumentChange.Type.REMOVED) {
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    repository.deleteClinicalNote(id)
-                                }
-                                continue
-                            }
-                            val patientId = doc.getString("patientId") ?: "General"
-                            val text = doc.getString("text") ?: doc.getString("note") ?: ""
-                            val authorId = doc.getString("authorId") ?: doc.getString("doctorName") ?: "Doctor"
-                            val date = doc.getString("date") ?: ""
-                            val senderDeviceId = doc.getString("senderDeviceId") ?: ""
-
-                            val clinicalNote = ClinicalNoteEntity(
-                                id = id,
-                                patientId = patientId,
-                                text = text,
-                                authorId = authorId,
-                                date = date
-                            )
-                            CoroutineScope(Dispatchers.IO).launch {
-                                repository.insertClinicalNote(clinicalNote)
-                            }
-
-                            val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
-                            if (!isInitialNotesLoad && (senderDeviceId != currentDeviceId || isBackground)) {
-                                FcmManager.showSystemNotification(
-                                    context = context,
-                                    title = "📝 Clinical Note / Advice: Patient $patientId",
-                                    body = "Dr. $authorId: \"${text.take(80)}\"",
-                                    kind = "doc"
-                                )
-                            }
-                        }
-                        isInitialNotesLoad = false
-                    }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "Clinical notes listener exception: ${e.message}")
-        }
-
-        // 6. Listen for Care Plans & Clinical Orders across all devices
-        try {
-            carePlanListener?.remove()
-            var isInitialCarePlanLoad = true
-            carePlanListener = db.collection(COLL_CARE_PLANS)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("Care plan listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        for (change in snapshot.documentChanges) {
-                            val doc = change.document
-                            val id = doc.id
-                            if (change.type == DocumentChange.Type.REMOVED) {
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    repository.deleteCarePlan(id)
-                                }
-                                continue
-                            }
-                            val patientId = doc.getString("patientId") ?: "General"
-                            val title = doc.getString("title") ?: ""
-                            val due = doc.getString("due") ?: ""
-                            val status = doc.getString("status") ?: "pending"
-                            val senderDeviceId = doc.getString("senderDeviceId") ?: ""
-
-                            val plan = CarePlanEntity(
-                                id = id,
-                                patientId = patientId,
-                                title = title,
-                                due = due,
-                                status = status
-                            )
-                            CoroutineScope(Dispatchers.IO).launch {
-                                repository.insertCarePlan(plan)
-                            }
-
-                            val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
-                            if (!isInitialCarePlanLoad && (senderDeviceId != currentDeviceId || isBackground)) {
-                                val isAdded = change.type == DocumentChange.Type.ADDED
-                                val notifTitle = if (isAdded) "📋 New Care Plan Scheduled" else "✓ Care Plan Completed"
-                                val notifBody = "$title (Due: $due) · Patient: $patientId · Status: $status"
-                                FcmManager.showSystemNotification(
-                                    context = context,
-                                    title = notifTitle,
-                                    body = notifBody,
-                                    kind = "task"
-                                )
-                            }
-                        }
-                        isInitialCarePlanLoad = false
-                    }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "Care plan listener exception: ${e.message}")
-        }
-
-        // 7. Listen for Staff Attendance Records across all devices
-        try {
-            attendanceListener?.remove()
-            var isInitialAttendanceLoad = true
-            attendanceListener = db.collection(COLL_ATTENDANCE)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("Attendance listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        for (change in snapshot.documentChanges) {
-                            val doc = change.document
-                            val userId = doc.getString("userId") ?: continue
-                            val date = doc.getString("date") ?: ""
-                            val time = doc.getString("time") ?: ""
-                            val method = doc.getString("method") ?: "Biometric"
-                            val senderDeviceId = doc.getString("senderDeviceId") ?: ""
-
-                            val attendance = AttendanceEntity(
-                                userId = userId,
-                                date = date,
-                                time = time,
-                                method = method
-                            )
-                            CoroutineScope(Dispatchers.IO).launch {
-                                repository.insertAttendance(attendance)
-                            }
-
-                            if (!isInitialAttendanceLoad && change.type == DocumentChange.Type.ADDED &&
-                                senderDeviceId != currentDeviceId
-                            ) {
-                                FcmManager.showSystemNotification(
-                                    context = context,
-                                    title = "⏱ Staff Attendance Logged",
-                                    body = "$userId checked in on $date at $time ($method)",
-                                    kind = "attendance"
-                                )
-                            }
-                        }
-                        isInitialAttendanceLoad = false
-                    }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "Attendance listener exception: ${e.message}")
-        }
-
-        // Listen for Clinical Vital Records across all devices
-        try {
-            vitalRecordListener?.remove()
-            vitalRecordListener = db.collection(COLL_VITAL_RECORDS)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("Vital record listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        for (change in snapshot.documentChanges) {
-                            val doc = change.document
-                            val id = doc.id
-                            if (change.type == DocumentChange.Type.REMOVED) {
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    repository.deleteVitalRecord(id)
-                                }
-                                continue
-                            }
-                            val patientId = doc.getString("patientId") ?: "General"
-                            val temp = doc.getString("temperature") ?: ""
-                            val spo2 = doc.getString("spo2") ?: ""
-                            val pulse = doc.getString("pulse") ?: ""
-                            val bp = doc.getString("bloodPressure") ?: ""
-                            val recordedAt = doc.getString("recordedAt") ?: ""
-                            val recordedBy = doc.getString("recordedBy") ?: ""
-
-                            val vr = VitalRecordEntity(
-                                id = id,
-                                patientId = patientId,
-                                temperature = temp,
-                                spo2 = spo2,
-                                pulse = pulse,
-                                bloodPressure = bp,
-                                recordedAt = recordedAt,
-                                recordedBy = recordedBy
-                            )
-                            CoroutineScope(Dispatchers.IO).launch {
-                                repository.insertVitalRecord(vr)
-                            }
-                        }
-                    }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "Vital record listener exception: ${e.message}")
-        }
-
-        // 8. Listen for Live Broadcasts and Voice Messages across ALL phones & web
-        try {
-            broadcastListener?.remove()
-            var isInitialBroadcastLoad = true
-            broadcastListener = db.collection(COLL_BROADCASTS)
-                .orderBy("createdAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
-                .limit(25)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("Broadcast snapshot listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        val broadcastList = mutableListOf<com.example.model.HospitalBroadcast>()
-                        for (doc in snapshot.documents) {
-                            val id = doc.id
-                            if (dismissedBroadcastIds.contains(id)) continue
-                            val title = doc.getString("title") ?: "Hospital Announcement"
-                            val body = doc.getString("body") ?: ""
-                            val priority = doc.getString("priority") ?: "NORMAL"
-                            val senderName = doc.getString("senderName") ?: "Staff"
-                            val senderRole = doc.getString("senderRole") ?: "Hospital"
-                            val time = doc.getString("time") ?: timeFormat.format(Date())
-                            val audience = doc.getString("audience") ?: "all"
-                            val timestamp = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                            val voiceNoteBase64 = doc.getString("voiceNoteBase64")
-                            val voiceDurationSec = doc.getLong("voiceDurationSec")?.toInt() ?: 0
-
-                            val bc = com.example.model.HospitalBroadcast(
-                                id = id,
-                                title = title,
-                                body = body,
-                                priority = priority,
-                                senderName = senderName,
-                                senderRole = senderRole,
-                                time = time,
-                                audience = audience,
-                                timestamp = timestamp,
-                                voiceNoteBase64 = voiceNoteBase64,
-                                voiceDurationSec = voiceDurationSec
-                            )
-                            broadcastList.add(bc)
-                        }
-
-                        _allBroadcasts.value = broadcastList
-                        if (broadcastList.isNotEmpty()) {
-                            _latestBroadcast.value = broadcastList.first()
-                        }
-
-                        // Also alert on new incoming broadcasts from other devices
-                        for (change in snapshot.documentChanges) {
-                            if (!isInitialBroadcastLoad && change.type == DocumentChange.Type.ADDED) {
+                        if (snapshot != null) {
+                            for (change in snapshot.documentChanges) {
                                 val doc = change.document
-                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
                                 val id = doc.id
+                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
+
+                                if (change.type == DocumentChange.Type.REMOVED) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        repository.deleteDocument(id)
+                                    }
+                                    continue
+                                }
+
+                                val patientId = doc.getString("patientId") ?: doc.getString("patient_id") ?: "General"
+                                val title = doc.getString("title") ?: "Document"
+                                val category = doc.getString("category") ?: "Medical Report"
+                                val date = doc.getString("date") ?: doc.getString("timestamp") ?: timeFormat.format(Date())
+                                val docTypeOrUri = doc.getString("docTypeOrUri") ?: doc.getString("previewBase64") ?: "SEED_LAB"
+                                val filterApplied = doc.getString("filterApplied") ?: "ORIGINAL"
+                                val remarks = doc.getString("remarks") ?: doc.getString("notes") ?: ""
+                                val addedBy = doc.getString("addedBy") ?: doc.getString("doctorName") ?: "Staff"
+
+                                val document = DocumentEntity(
+                                    id = id,
+                                    patientId = patientId,
+                                    title = title,
+                                    category = category,
+                                    date = date,
+                                    docTypeOrUri = docTypeOrUri,
+                                    filterApplied = filterApplied,
+                                    remarks = remarks,
+                                    addedBy = addedBy
+                                )
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    repository.insertDocument(document)
+                                }
+
+                                // Alert if a new or updated medical report, prescription, or scan was uploaded
                                 val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
-                                if ((senderDeviceId != FcmManager.DEVICE_INSTANCE_ID || isBackground) && !seenNotificationIds.contains(id)) {
+                                if (!isInitialDocLoad &&
+                                    (senderDeviceId.isBlank() || senderDeviceId != currentDeviceId || isBackground) &&
+                                    !seenNotificationIds.contains(id)
+                                ) {
                                     seenNotificationIds.add(id)
-                                    val title = doc.getString("title") ?: "📢 Hospital Broadcast"
-                                    val body = doc.getString("body") ?: ""
-                                    val isCritical = doc.getString("priority")?.equals("critical", ignoreCase = true) == true
+                                    val alertTitle = if (change.type == DocumentChange.Type.ADDED) "📄 New $category Uploaded" else "📄 $category Updated"
                                     FcmManager.showSystemNotification(
                                         context = context,
-                                        title = (if (isCritical) "🚨 " else "📢 ") + title,
-                                        body = body,
-                                        kind = if (isCritical) "emergency" else "admin",
-                                        isCritical = isCritical
+                                        title = alertTitle,
+                                        body = "$title for Patient $patientId by $addedBy",
+                                        kind = "doc"
                                     )
                                 }
                             }
+                            isInitialDocLoad = false
                         }
-                        isInitialBroadcastLoad = false
                     }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "Broadcast listener exception: ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Document listener exception: ${e.message}")
+            }
+        }
+
+        // 5. Listen for Clinical Observations & Doctor Progress Notes
+        if (clinicalNoteListener == null) {
+            try {
+                var isInitialNotesLoad = true
+                clinicalNoteListener = db.collection(COLL_CLINICAL_NOTES)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("Clinical notes listener notice", error)
+                            return@addSnapshotListener
+                        }
+                        if (snapshot != null) {
+                            for (change in snapshot.documentChanges) {
+                                val doc = change.document
+                                val id = doc.id
+                                if (change.type == DocumentChange.Type.REMOVED) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        repository.deleteClinicalNote(id)
+                                    }
+                                    continue
+                                }
+                                val patientId = doc.getString("patientId") ?: "General"
+                                val text = doc.getString("text") ?: doc.getString("note") ?: ""
+                                val authorId = doc.getString("authorId") ?: doc.getString("doctorName") ?: "Doctor"
+                                val date = doc.getString("date") ?: ""
+                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
+
+                                val clinicalNote = ClinicalNoteEntity(
+                                    id = id,
+                                    patientId = patientId,
+                                    text = text,
+                                    authorId = authorId,
+                                    date = date
+                                )
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    repository.insertClinicalNote(clinicalNote)
+                                }
+
+                                val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
+                                if (!isInitialNotesLoad && (senderDeviceId.isBlank() || senderDeviceId != currentDeviceId || isBackground)) {
+                                    FcmManager.showSystemNotification(
+                                        context = context,
+                                        title = "📝 Clinical Note / Advice: Patient $patientId",
+                                        body = "Dr. $authorId: \"${text.take(80)}\"",
+                                        kind = "doc"
+                                    )
+                                }
+                            }
+                            isInitialNotesLoad = false
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.w(TAG, "Clinical notes listener exception: ${e.message}")
+            }
+        }
+
+        // 6. Listen for Care Plans & Clinical Orders across all devices
+        if (carePlanListener == null) {
+            try {
+                var isInitialCarePlanLoad = true
+                carePlanListener = db.collection(COLL_CARE_PLANS)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("Care plan listener notice", error)
+                            return@addSnapshotListener
+                        }
+                        if (snapshot != null) {
+                            for (change in snapshot.documentChanges) {
+                                val doc = change.document
+                                val id = doc.id
+                                if (change.type == DocumentChange.Type.REMOVED) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        repository.deleteCarePlan(id)
+                                    }
+                                    continue
+                                }
+                                val patientId = doc.getString("patientId") ?: "General"
+                                val title = doc.getString("title") ?: ""
+                                val due = doc.getString("due") ?: ""
+                                val status = doc.getString("status") ?: "pending"
+                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
+
+                                val plan = CarePlanEntity(
+                                    id = id,
+                                    patientId = patientId,
+                                    title = title,
+                                    due = due,
+                                    status = status
+                                )
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    repository.insertCarePlan(plan)
+                                }
+
+                                val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
+                                if (!isInitialCarePlanLoad && (senderDeviceId.isBlank() || senderDeviceId != currentDeviceId || isBackground)) {
+                                    val isAdded = change.type == DocumentChange.Type.ADDED
+                                    val notifTitle = if (isAdded) "📋 New Care Plan Scheduled" else "✓ Care Plan Completed"
+                                    val notifBody = "$title (Due: $due) · Patient: $patientId · Status: $status"
+                                    FcmManager.showSystemNotification(
+                                        context = context,
+                                        title = notifTitle,
+                                        body = notifBody,
+                                        kind = "task"
+                                    )
+                                }
+                            }
+                            isInitialCarePlanLoad = false
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.w(TAG, "Care plan listener exception: ${e.message}")
+            }
+        }
+
+        // 7. Listen for Staff Attendance Records across all devices
+        if (attendanceListener == null) {
+            try {
+                var isInitialAttendanceLoad = true
+                attendanceListener = db.collection(COLL_ATTENDANCE)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("Attendance listener notice", error)
+                            return@addSnapshotListener
+                        }
+                        if (snapshot != null) {
+                            for (change in snapshot.documentChanges) {
+                                val doc = change.document
+                                val userId = doc.getString("userId") ?: continue
+                                val date = doc.getString("date") ?: ""
+                                val time = doc.getString("time") ?: ""
+                                val method = doc.getString("method") ?: "Biometric"
+                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
+
+                                val attendance = AttendanceEntity(
+                                    userId = userId,
+                                    date = date,
+                                    time = time,
+                                    method = method
+                                )
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    repository.insertAttendance(attendance)
+                                }
+
+                                if (!isInitialAttendanceLoad && change.type == DocumentChange.Type.ADDED &&
+                                    (senderDeviceId.isBlank() || senderDeviceId != currentDeviceId)
+                                ) {
+                                    FcmManager.showSystemNotification(
+                                        context = context,
+                                        title = "⏱ Staff Attendance Logged",
+                                        body = "$userId checked in on $date at $time ($method)",
+                                        kind = "attendance"
+                                    )
+                                }
+                            }
+                            isInitialAttendanceLoad = false
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.w(TAG, "Attendance listener exception: ${e.message}")
+            }
+        }
+
+        // Listen for Clinical Vital Records across all devices
+        if (vitalRecordListener == null) {
+            try {
+                vitalRecordListener = db.collection(COLL_VITAL_RECORDS)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("Vital record listener notice", error)
+                            return@addSnapshotListener
+                        }
+                        if (snapshot != null) {
+                            for (change in snapshot.documentChanges) {
+                                val doc = change.document
+                                val id = doc.id
+                                if (change.type == DocumentChange.Type.REMOVED) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        repository.deleteVitalRecord(id)
+                                    }
+                                    continue
+                                }
+                                val patientId = doc.getString("patientId") ?: "General"
+                                val temp = doc.getString("temperature") ?: ""
+                                val spo2 = doc.getString("spo2") ?: ""
+                                val pulse = doc.getString("pulse") ?: ""
+                                val bp = doc.getString("bloodPressure") ?: ""
+                                val recordedAt = doc.getString("recordedAt") ?: ""
+                                val recordedBy = doc.getString("recordedBy") ?: ""
+
+                                val vr = VitalRecordEntity(
+                                    id = id,
+                                    patientId = patientId,
+                                    temperature = temp,
+                                    spo2 = spo2,
+                                    pulse = pulse,
+                                    bloodPressure = bp,
+                                    recordedAt = recordedAt,
+                                    recordedBy = recordedBy
+                                )
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    repository.insertVitalRecord(vr)
+                                }
+                            }
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.w(TAG, "Vital record listener exception: ${e.message}")
+            }
+        }
+
+        // 8. Listen for Live Broadcasts and Voice Messages across ALL phones & web
+        if (broadcastListener == null) {
+            try {
+                var isInitialBroadcastLoad = true
+                broadcastListener = db.collection(COLL_BROADCASTS)
+                    .orderBy("createdAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                    .limit(25)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("Broadcast snapshot listener notice", error)
+                            return@addSnapshotListener
+                        }
+                        if (snapshot != null) {
+                            val broadcastList = mutableListOf<com.example.model.HospitalBroadcast>()
+                            for (doc in snapshot.documents) {
+                                val id = doc.id
+                                if (dismissedBroadcastIds.contains(id)) continue
+                                val title = doc.getString("title") ?: "Hospital Announcement"
+                                val body = doc.getString("body") ?: ""
+                                val priority = doc.getString("priority") ?: "NORMAL"
+                                val senderName = doc.getString("senderName") ?: "Staff"
+                                val senderRole = doc.getString("senderRole") ?: "Hospital"
+                                val time = doc.getString("time") ?: timeFormat.format(Date())
+                                val audience = doc.getString("audience") ?: "all"
+                                val timestamp = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                                val voiceNoteBase64 = doc.getString("voiceNoteBase64")
+                                val voiceDurationSec = doc.getLong("voiceDurationSec")?.toInt() ?: 0
+
+                                val bc = com.example.model.HospitalBroadcast(
+                                    id = id,
+                                    title = title,
+                                    body = body,
+                                    priority = priority,
+                                    senderName = senderName,
+                                    senderRole = senderRole,
+                                    time = time,
+                                    audience = audience,
+                                    timestamp = timestamp,
+                                    voiceNoteBase64 = voiceNoteBase64,
+                                    voiceDurationSec = voiceDurationSec
+                                )
+                                broadcastList.add(bc)
+                            }
+
+                            _allBroadcasts.value = broadcastList
+                            if (broadcastList.isNotEmpty()) {
+                                _latestBroadcast.value = broadcastList.first()
+                            }
+
+                            // Also alert on new incoming broadcasts from other devices
+                            for (change in snapshot.documentChanges) {
+                                if (!isInitialBroadcastLoad && change.type == DocumentChange.Type.ADDED) {
+                                    val doc = change.document
+                                    val senderDeviceId = doc.getString("senderDeviceId") ?: ""
+                                    val id = doc.id
+                                    val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
+                                    if ((senderDeviceId.isBlank() || senderDeviceId != currentDeviceId || isBackground) && !seenNotificationIds.contains(id)) {
+                                        seenNotificationIds.add(id)
+                                        val title = doc.getString("title") ?: "📢 Hospital Broadcast"
+                                        val body = doc.getString("body") ?: ""
+                                        val isCritical = doc.getString("priority")?.equals("critical", ignoreCase = true) == true
+                                        FcmManager.showSystemNotification(
+                                            context = context,
+                                            title = (if (isCritical) "🚨 " else "📢 ") + title,
+                                            body = body,
+                                            kind = if (isCritical) "emergency" else "admin",
+                                            isCritical = isCritical
+                                        )
+                                    }
+                                }
+                            }
+                            isInitialBroadcastLoad = false
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.w(TAG, "Broadcast listener exception: ${e.message}")
+            }
         }
 
         // 9. Listen for Live App Updates & Feature Releases published by Boss
-        try {
-            appUpdateListener?.remove()
-            appUpdateListener = db.collection(COLL_APP_CONFIG).document(DOC_VERSION)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        handleListenerError("App update listener notice", error)
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null && snapshot.exists()) {
-                        val versionCode = (snapshot.getLong("versionCode") ?: 1L).toInt()
-                        val versionName = snapshot.getString("versionName") ?: "1.0"
-                        val releaseTitle = snapshot.getString("releaseTitle") ?: "App & Feature Release"
-                        val releaseNotes = snapshot.getString("releaseNotes") ?: "Latest hospital modules and cloud database sync verified."
-                        val forceUpdate = snapshot.getBoolean("forceUpdate") ?: false
-                        val publishedBy = snapshot.getString("publishedBy") ?: "BOSS-0001 (Boss)"
-                        val publishedAt = snapshot.getString("publishedAt") ?: ""
-                        val updatePulseId = snapshot.getString("updatePulseId") ?: ""
+        if (appUpdateListener == null) {
+            try {
+                appUpdateListener = db.collection(COLL_APP_CONFIG).document(DOC_VERSION)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            handleListenerError("App update listener notice", error)
+                            return@addSnapshotListener
+                        }
+                        if (snapshot != null && snapshot.exists()) {
+                            val versionCode = (snapshot.getLong("versionCode") ?: 1L).toInt()
+                            val versionName = snapshot.getString("versionName") ?: "1.0"
+                            val releaseTitle = snapshot.getString("releaseTitle") ?: "App & Feature Release"
+                            val releaseNotes = snapshot.getString("releaseNotes") ?: "Latest hospital modules and cloud database sync verified."
+                            val forceUpdate = snapshot.getBoolean("forceUpdate") ?: false
+                            val publishedBy = snapshot.getString("publishedBy") ?: "BOSS-0001 (Boss)"
+                            val publishedAt = snapshot.getString("publishedAt") ?: ""
+                            val updatePulseId = snapshot.getString("updatePulseId") ?: ""
 
-                        _appUpdateInfo.value = com.example.model.AppUpdateInfo(
-                            versionCode = versionCode,
-                            versionName = versionName,
-                            releaseTitle = releaseTitle,
-                            releaseNotes = releaseNotes,
-                            forceUpdate = forceUpdate,
-                            publishedBy = publishedBy,
-                            publishedAt = publishedAt,
-                            updatePulseId = updatePulseId
-                        )
+                            _appUpdateInfo.value = com.example.model.AppUpdateInfo(
+                                versionCode = versionCode,
+                                versionName = versionName,
+                                releaseTitle = releaseTitle,
+                                releaseNotes = releaseNotes,
+                                forceUpdate = forceUpdate,
+                                publishedBy = publishedBy,
+                                publishedAt = publishedAt,
+                                updatePulseId = updatePulseId
+                            )
+                        }
                     }
-                }
-        } catch (e: Exception) {
-            Log.w(TAG, "App update listener exception: ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "App update listener exception: ${e.message}")
+            }
         }
     }
 
@@ -1554,7 +1581,7 @@ object CloudDatabaseManager {
                 "audience" to notification.audience,
                 "read" to notification.read,
                 "kind" to notification.kind,
-                "senderDeviceId" to FcmManager.DEVICE_INSTANCE_ID,
+                "senderDeviceId" to FcmManager.getDeviceId(context),
                 "createdAt" to System.currentTimeMillis()
             )
             db.collection(COLL_NOTIFICATIONS).document(notification.id)
@@ -1603,7 +1630,7 @@ object CloudDatabaseManager {
                 "read" to false,
                 "kind" to if (isCritical) "emergency" else if (broadcast.priority == "APP_UPDATE") "app_update" else "admin",
                 "priority" to broadcast.priority,
-                "senderDeviceId" to FcmManager.DEVICE_INSTANCE_ID,
+                "senderDeviceId" to FcmManager.getDeviceId(context),
                 "senderName" to broadcast.senderName,
                 "senderRole" to broadcast.senderRole,
                 "forceAlert" to true,
@@ -1734,7 +1761,7 @@ object CloudDatabaseManager {
                 "filterApplied" to doc.filterApplied,
                 "remarks" to doc.remarks,
                 "addedBy" to doc.addedBy,
-                "senderDeviceId" to FcmManager.DEVICE_INSTANCE_ID,
+                "senderDeviceId" to FcmManager.getDeviceId(context),
                 "createdAt" to System.currentTimeMillis()
             )
             db.collection(COLL_DOCUMENTS).document(doc.id)
@@ -1762,7 +1789,7 @@ object CloudDatabaseManager {
                 "text" to note.text,
                 "authorId" to note.authorId,
                 "date" to note.date,
-                "senderDeviceId" to FcmManager.DEVICE_INSTANCE_ID,
+                "senderDeviceId" to FcmManager.getDeviceId(context),
                 "createdAt" to System.currentTimeMillis()
             )
             db.collection(COLL_CLINICAL_NOTES).document(note.id)
@@ -1790,7 +1817,7 @@ object CloudDatabaseManager {
                 "title" to plan.title,
                 "due" to plan.due,
                 "status" to plan.status,
-                "senderDeviceId" to FcmManager.DEVICE_INSTANCE_ID,
+                "senderDeviceId" to FcmManager.getDeviceId(context),
                 "lastUpdated" to System.currentTimeMillis()
             )
             db.collection(COLL_CARE_PLANS).document(plan.id)
@@ -1817,7 +1844,7 @@ object CloudDatabaseManager {
                 "date" to attendance.date,
                 "time" to attendance.time,
                 "method" to attendance.method,
-                "senderDeviceId" to FcmManager.DEVICE_INSTANCE_ID,
+                "senderDeviceId" to FcmManager.getDeviceId(context),
                 "timestamp" to System.currentTimeMillis()
             )
             val docId = "${attendance.userId}_${attendance.date.replace('-', '_')}"
@@ -1840,7 +1867,7 @@ object CloudDatabaseManager {
                 "bloodPressure" to record.bloodPressure,
                 "recordedAt" to record.recordedAt,
                 "recordedBy" to record.recordedBy,
-                "senderDeviceId" to FcmManager.DEVICE_INSTANCE_ID,
+                "senderDeviceId" to FcmManager.getDeviceId(context),
                 "createdAt" to System.currentTimeMillis()
             )
             db.collection(COLL_VITAL_RECORDS).document(record.id)
