@@ -202,7 +202,12 @@ fun BedsScreen(viewModel: HospitalViewModel) {
 
         // Ward-by-Ward Interactive Bed Grid
         HospitalConstants.WARDS.forEach { ward ->
-            val wardPatients = activePatients.filter { it.ward == ward.name }
+            val wardPatients = activePatients.filter { pt ->
+                pt.ward.equals(ward.name, ignoreCase = true) ||
+                (ward.name.equals("ICU", ignoreCase = true) && pt.ward.contains("ICU", ignoreCase = true)) ||
+                (ward.name.equals("3rd Floor", ignoreCase = true) && pt.ward.contains("3rd", ignoreCase = true)) ||
+                (ward.name.equals("2nd Floor Cabins", ignoreCase = true) && (pt.ward.contains("Cabin", ignoreCase = true) || pt.ward.contains("2nd", ignoreCase = true)))
+            }
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),

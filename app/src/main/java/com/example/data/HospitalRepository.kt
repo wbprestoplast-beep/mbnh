@@ -59,6 +59,10 @@ class HospitalRepository(private val dao: HospitalDao) {
         dao.getAllPatientsDirect()
     }
 
+    suspend fun getPatientById(id: String): PatientEntity? = withContext(Dispatchers.IO) {
+        dao.getPatientById(id)
+    }
+
     suspend fun insertPatient(patient: PatientEntity) = withContext(Dispatchers.IO) {
         dao.insertPatient(patient)
     }

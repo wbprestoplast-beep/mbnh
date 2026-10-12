@@ -114,39 +114,27 @@ data class HospitalBroadcast(
 object HospitalConstants {
     val WARDS = listOf(
         WardInfo(
-            "ICU / Critical Care",
-            (101..110).map { "$it" }
+            "ICU",
+            (101..109).map { "$it" }
         ),
         WardInfo(
             "Male Ward",
-            (201..212).map { "$it" }
+            (201..209).map { "$it" }
         ),
         WardInfo(
             "Female Ward",
-            (213..225).map { "$it" }
+            (214..224).map { "$it" }
         ),
         WardInfo(
-            "Pediatrics Ward",
-            (301..308).map { "$it" }
+            "2nd Floor Cabins",
+            listOf("210", "211", "212", "213")
         ),
         WardInfo(
-            "Surgical & Post-Op Ward",
-            (401..410).map { "$it" }
-        ),
-        WardInfo(
-            "Maternity / Obstetric Ward",
-            (501..510).map { "$it" }
-        ),
-        WardInfo(
-            "Emergency / ER",
-            (601..608).map { "$it" }
-        ),
-        WardInfo(
-            "3rd Floor Private Rooms",
+            "3rd Floor",
             listOf(
-                "301A", "302A", "302B", "302C", "302D",
+                "301", "302A", "302B", "302C", "302D",
                 "303", "304", "305", "306",
-                "307A", "307B", "308",
+                "307A", "307B",
                 "309A", "309B", "309C",
                 "310A", "310B"
             )

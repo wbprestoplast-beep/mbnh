@@ -1329,7 +1329,7 @@ fun PatientDetailScreen(
         var transferReasonInput by remember { mutableStateOf("") }
         var isWardDropdownExpanded by remember { mutableStateOf(false) }
 
-        val wardOptions = com.example.model.HospitalConstants.WARDS.map { it.name } + listOf("Emergency", "ICU", "3rd Floor", "General Ward")
+        val wardOptions = (com.example.model.HospitalConstants.WARDS.map { it.name } + listOf("Emergency", "General Ward")).distinct()
 
         Dialog(onDismissRequest = { showTransferModal = false }) {
             Card(

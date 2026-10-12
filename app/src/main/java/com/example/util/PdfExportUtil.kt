@@ -33,12 +33,6 @@ object PdfExportUtil {
         val pageHeight = 842 // A4 standard height in points
 
         val pdfDocument = PdfDocument()
-        val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
-        val page = pdfDocument.startPage(pageInfo)
-        val canvas: Canvas = page.canvas
-
-        // Background
-        canvas.drawColor(Color.WHITE)
 
         val headerPaint = Paint().apply {
             color = Color.rgb(14, 116, 144) // Teal brand color

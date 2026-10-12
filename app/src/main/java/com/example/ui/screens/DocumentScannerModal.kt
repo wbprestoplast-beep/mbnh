@@ -704,18 +704,23 @@ fun DocumentScannerModal(viewModel: HospitalViewModel) {
                     // Filter selector & retake
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        DocumentFilter.entries.forEach { f ->
-                            FilterChip(
-                                selected = activeFilter == f,
-                                onClick = { activeFilter = f },
-                                label = { Text(f.label, fontSize = 10.sp) },
-                                shape = RoundedCornerShape(999.dp)
-                            )
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            items(DocumentFilter.entries.size) { index ->
+                                val f = DocumentFilter.entries[index]
+                                FilterChip(
+                                    selected = activeFilter == f,
+                                    onClick = { activeFilter = f },
+                                    label = { Text(f.label, fontSize = 11.sp, maxLines = 1, softWrap = false) },
+                                    shape = RoundedCornerShape(999.dp)
+                                )
+                            }
                         }
-                        Spacer(modifier = Modifier.weight(1f))
                         IconButton(onClick = {
                             capturedPages.clear()
                             activePreviewPageIndex = 0

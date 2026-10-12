@@ -1230,7 +1230,7 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             val bossUser = UserEntity(
                 id = "BOSS-0001",
                 pass = if (!bossInDb?.pass.isNullOrBlank()) bossInDb!!.pass else "12345",
-                name = "Dr. S. K. Bose",
+                name = "BOSS",
                 role = "BOSS",
                 dept = "Administration",
                 specialty = "Owner · Full Access",
@@ -1291,7 +1291,7 @@ class HospitalViewModel(application: Application) : AndroidViewModel(application
             val bossUser = UserEntity(
                 id = "BOSS-0001",
                 pass = "12345",
-                name = "Dr. S. K. Bose",
+                name = "BOSS",
                 role = "BOSS",
                 dept = "Administration",
                 specialty = "Owner · Full Access",

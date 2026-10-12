@@ -276,19 +276,25 @@ object CloudDatabaseManager {
         val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // 1. Reconcile Users / Staff Roster FIRST so all newly created RMO, Maintenance, Doctor, and Nurse accounts are immediately available on every device
+                // First: Push all local users and patients to Cloud so local edits (discharges, name updates) are synced
+                val currentUsers = repository.getAllUsersDirect()
+                currentUsers.forEach { u -> syncUserToCloud(context, u) }
+                val currentPts = repository.getAllPatientsDirect()
+                currentPts.forEach { p -> syncPatientToCloud(context, p) }
+
+                // 1. Reconcile Users / Staff Roster
                 val userSnap = try {
                     Tasks.await(db.collection(COLL_USERS).get(), 8, TimeUnit.SECONDS)
                 } catch (e: Exception) {
                     Log.w(TAG, "Reconcile users notice: ${e.message}")
                     null
                 }
+                val cloudUserIds = mutableSetOf<String>()
                 if (userSnap != null && !userSnap.isEmpty) {
-                    val cloudUserIds = mutableSetOf<String>()
                     for (doc in userSnap.documents) {
                         val id = doc.getString("id") ?: doc.id
                         cloudUserIds.add(id)
-                        val name = doc.getString("name") ?: doc.getString("userName") ?: doc.getString("fullName") ?: id
+                        var name = doc.getString("name") ?: doc.getString("userName") ?: doc.getString("fullName") ?: id
                         val role = if (id == "BOSS-0001") "BOSS" else (doc.getString("role") ?: "NURSE")
                         val dept = doc.getString("dept") ?: doc.getString("department") ?: if (id == "BOSS-0001") "Administration" else "General"
                         val spec = doc.getString("specialty") ?: if (id == "BOSS-0001") "Owner · Full Access" else "General"
@@ -297,6 +303,13 @@ object CloudDatabaseManager {
                         val pass = doc.getString("pass") ?: "12345"
                         val photoUri = doc.getString("photoUri")?.ifBlank { null }
                         val joinedDate = doc.getString("joinedDate") ?: doc.getString("joiningDate") ?: "2026-01-01"
+
+                        val localUser = repository.getUserById(id)
+                        if (id == "BOSS-0001") {
+                            name = "BOSS"
+                        } else if (localUser != null && localUser.name.isNotBlank() && localUser.name != name) {
+                            name = localUser.name
+                        }
 
                         val user = UserEntity(
                             id = id,
@@ -311,16 +324,10 @@ object CloudDatabaseManager {
                             joinedDate = joinedDate
                         )
                         repository.insertUser(user)
+                        syncUserToCloud(context, user)
                     }
-                    // Prune local users that were removed from cloud by Administrator/Boss
-                    val localUsers = repository.getAllUsersDirect()
-                    for (u in localUsers) {
-                        if (u.id != "BOSS-0001" && u.id !in cloudUserIds) {
-                            repository.deleteUser(u.id)
-                        }
-                    }
-                    ensureBossUserExists(repository)
                 }
+                ensureBossUserExists(repository)
 
                 // 2. Reconcile patients
                 val patientSnap = try {
@@ -329,12 +336,12 @@ object CloudDatabaseManager {
                     Log.w(TAG, "Reconcile patients notice: ${e.message}")
                     null
                 }
+                val cloudPatientIds = mutableSetOf<String>()
                 if (patientSnap != null && !patientSnap.isEmpty) {
-                    val cloudPatientIds = mutableSetOf<String>()
                     for (doc in patientSnap.documents) {
                         val id = doc.getString("id") ?: doc.id
                         cloudPatientIds.add(id)
-                        val name = doc.getString("name") ?: doc.getString("patientName") ?: doc.getString("fullName") ?: "Patient $id"
+                        var name = doc.getString("name") ?: doc.getString("patientName") ?: doc.getString("fullName") ?: "Patient $id"
                         val age = (doc.get("age") as? Number)?.toInt() ?: (doc.getString("age")?.toIntOrNull()) ?: 0
                         val gender = doc.getString("gender") ?: "Other"
                         val ward = doc.getString("ward") ?: "General Ward"
@@ -343,20 +350,32 @@ object CloudDatabaseManager {
                         val admittedOn = doc.getString("admittedOn") ?: "Today"
                         val condition = doc.getString("condition") ?: "Stable"
                         val phone = doc.getString("phone") ?: ""
-                        val refDoc = doc.getString("referralDoctorId")
-                        val refReason = doc.getString("referralReason")
-                        val refBy = doc.getString("referralBy")
-                        val refDate = doc.getString("referralDate")
-                        val status = doc.getString("status") ?: "ADMITTED"
-                        val dischargedOn = doc.getString("dischargedOn")
-                        val dischargeSummary = doc.getString("dischargeSummary")
-                        val temp = doc.getString("temperature")
-                        val spo2 = doc.getString("spo2")
-                        val pulse = doc.getString("pulse")
-                        val bp = doc.getString("bloodPressure")
-                        val cbg = doc.getString("cbg")
-                        val vitalsTime = doc.getString("vitalsUpdatedAt")
-                        val vitalsBy = doc.getString("vitalsUpdatedBy")
+                        val refDoc = doc.getString("referralDoctorId")?.ifBlank { null }
+                        val refReason = doc.getString("referralReason")?.ifBlank { null }
+                        val refBy = doc.getString("referralBy")?.ifBlank { null }
+                        val refDate = doc.getString("referralDate")?.ifBlank { null }
+                        var status = doc.getString("status") ?: "ADMITTED"
+                        var dischargedOn = doc.getString("dischargedOn")?.ifBlank { null }
+                        var dischargeSummary = doc.getString("dischargeSummary")?.ifBlank { null }
+                        val temp = doc.getString("temperature")?.ifBlank { null }
+                        val spo2 = doc.getString("spo2")?.ifBlank { null }
+                        val pulse = doc.getString("pulse")?.ifBlank { null }
+                        val bp = doc.getString("bloodPressure")?.ifBlank { null }
+                        val cbg = doc.getString("cbg")?.ifBlank { null }
+                        val vitalsTime = doc.getString("vitalsUpdatedAt")?.ifBlank { null }
+                        val vitalsBy = doc.getString("vitalsUpdatedBy")?.ifBlank { null }
+
+                        val localPatient = repository.getPatientById(id)
+                        if (localPatient != null) {
+                            if (localPatient.status.equals("DISCHARGED", ignoreCase = true)) {
+                                status = "DISCHARGED"
+                                dischargedOn = localPatient.dischargedOn ?: dischargedOn
+                                dischargeSummary = localPatient.dischargeSummary ?: dischargeSummary
+                            }
+                            if (localPatient.name.isNotBlank() && localPatient.name != name) {
+                                name = localPatient.name
+                            }
+                        }
 
                         val patient = PatientEntity(
                             id = id,
@@ -385,13 +404,14 @@ object CloudDatabaseManager {
                             vitalsUpdatedBy = vitalsBy
                         )
                         repository.insertPatient(patient)
+                        syncPatientToCloud(context, patient)
                     }
-                    // Prune local patients that were deleted from cloud
-                    val localPatients = repository.getAllPatientsDirect()
-                    for (p in localPatients) {
-                        if (p.id !in cloudPatientIds) {
-                            repository.deletePatient(p.id)
-                        }
+                }
+                // Push local patients not in cloud
+                val localPatients = repository.getAllPatientsDirect()
+                for (p in localPatients) {
+                    if (p.id !in cloudPatientIds) {
+                        syncPatientToCloud(context, p)
                     }
                 }
 
@@ -399,9 +419,11 @@ object CloudDatabaseManager {
                 val notifSnap = try {
                     Tasks.await(db.collection(COLL_NOTIFICATIONS).get(), 6, TimeUnit.SECONDS)
                 } catch (_: Exception) { null }
+                val cloudNotifIds = mutableSetOf<String>()
                 if (notifSnap != null && !notifSnap.isEmpty) {
                     for (doc in notifSnap.documents) {
                         val id = doc.id
+                        cloudNotifIds.add(id)
                         val title = doc.getString("title") ?: "Hospital Alert"
                         val body = doc.getString("body") ?: ""
                         val audience = doc.getString("audience") ?: "all"
@@ -420,13 +442,19 @@ object CloudDatabaseManager {
                         repository.insertNotification(notif)
                     }
                 }
+                val localNotifs = repository.allNotifications.firstOrNull() ?: emptyList()
+                for (n in localNotifs) {
+                    if (n.id !in cloudNotifIds) {
+                        publishNotificationToCloud(context, n)
+                    }
+                }
 
                 // 4. Reconcile vital records
                 val vitalSnap = try {
                     Tasks.await(db.collection(COLL_VITAL_RECORDS).get(), 6, TimeUnit.SECONDS)
                 } catch (_: Exception) { null }
+                val cloudVitalIds = mutableSetOf<String>()
                 if (vitalSnap != null && !vitalSnap.isEmpty) {
-                    val cloudVitalIds = mutableSetOf<String>()
                     for (doc in vitalSnap.documents) {
                         val id = doc.id
                         cloudVitalIds.add(id)
@@ -451,11 +479,11 @@ object CloudDatabaseManager {
                         )
                         repository.insertVitalRecord(vr)
                     }
-                    val localVitals = repository.allVitalRecords.firstOrNull() ?: emptyList()
-                    for (v in localVitals) {
-                        if (v.id !in cloudVitalIds) {
-                            repository.deleteVitalRecord(v.id)
-                        }
+                }
+                val localVitals = repository.getAllVitalRecordsDirect()
+                for (v in localVitals) {
+                    if (v.id !in cloudVitalIds) {
+                        syncVitalRecordToCloud(context, v)
                     }
                 }
 
@@ -463,8 +491,8 @@ object CloudDatabaseManager {
                 val noteSnap = try {
                     Tasks.await(db.collection(COLL_CLINICAL_NOTES).get(), 6, TimeUnit.SECONDS)
                 } catch (_: Exception) { null }
+                val cloudNoteIds = mutableSetOf<String>()
                 if (noteSnap != null && !noteSnap.isEmpty) {
-                    val cloudNoteIds = mutableSetOf<String>()
                     for (doc in noteSnap.documents) {
                         val id = doc.id
                         cloudNoteIds.add(id)
@@ -481,11 +509,11 @@ object CloudDatabaseManager {
                         )
                         repository.insertClinicalNote(cn)
                     }
-                    val localNotes = repository.allClinicalNotes.firstOrNull() ?: emptyList()
-                    for (n in localNotes) {
-                        if (n.id !in cloudNoteIds) {
-                            repository.deleteClinicalNote(n.id)
-                        }
+                }
+                val localNotes = repository.getAllClinicalNotesDirect()
+                for (n in localNotes) {
+                    if (n.id !in cloudNoteIds) {
+                        syncClinicalNoteToCloud(context, n)
                     }
                 }
 
@@ -493,8 +521,8 @@ object CloudDatabaseManager {
                 val planSnap = try {
                     Tasks.await(db.collection(COLL_CARE_PLANS).get(), 6, TimeUnit.SECONDS)
                 } catch (_: Exception) { null }
+                val cloudPlanIds = mutableSetOf<String>()
                 if (planSnap != null && !planSnap.isEmpty) {
-                    val cloudPlanIds = mutableSetOf<String>()
                     for (doc in planSnap.documents) {
                         val id = doc.id
                         cloudPlanIds.add(id)
@@ -511,20 +539,20 @@ object CloudDatabaseManager {
                         )
                         repository.insertCarePlan(cp)
                     }
-                    val localPlans = repository.allCarePlans.firstOrNull() ?: emptyList()
-                    for (p in localPlans) {
-                        if (p.id !in cloudPlanIds) {
-                            repository.deleteCarePlan(p.id)
-                        }
+                }
+                val localPlans = repository.getAllCarePlansDirect()
+                for (p in localPlans) {
+                    if (p.id !in cloudPlanIds) {
+                        syncCarePlanToCloud(context, p)
                     }
                 }
 
-                // 7. Reconcile attendance (preventing duplicate rows)
+                // 7. Reconcile attendance
                 val attSnap = try {
                     Tasks.await(db.collection(COLL_ATTENDANCE).get(), 6, TimeUnit.SECONDS)
                 } catch (_: Exception) { null }
                 if (attSnap != null && !attSnap.isEmpty) {
-                    val localAtt = repository.allAttendance.firstOrNull() ?: emptyList()
+                    val localAtt = repository.getAllAttendanceDirect()
                     for (doc in attSnap.documents) {
                         val userId = doc.getString("userId") ?: continue
                         val date = doc.getString("date") ?: ""
@@ -542,13 +570,17 @@ object CloudDatabaseManager {
                         }
                     }
                 }
+                val localAttendanceList = repository.getAllAttendanceDirect()
+                for (att in localAttendanceList) {
+                    syncAttendanceToCloud(context, att)
+                }
 
                 // 8. Reconcile medical documents
                 val docSnap = try {
                     Tasks.await(db.collection(COLL_DOCUMENTS).get(), 6, TimeUnit.SECONDS)
                 } catch (_: Exception) { null }
+                val cloudDocIds = mutableSetOf<String>()
                 if (docSnap != null && !docSnap.isEmpty) {
-                    val cloudDocIds = mutableSetOf<String>()
                     for (doc in docSnap.documents) {
                         val id = doc.id
                         cloudDocIds.add(id)
@@ -574,11 +606,11 @@ object CloudDatabaseManager {
                         )
                         repository.insertDocument(document)
                     }
-                    val localDocs = repository.allDocuments.firstOrNull() ?: emptyList()
-                    for (d in localDocs) {
-                        if (d.id !in cloudDocIds) {
-                            repository.deleteDocument(d.id)
-                        }
+                }
+                val localDocs = repository.getAllDocumentsDirect()
+                for (d in localDocs) {
+                    if (d.id !in cloudDocIds) {
+                        syncDocumentToCloud(context, d)
                     }
                 }
 
@@ -721,10 +753,26 @@ object CloudDatabaseManager {
         }
     }
 
+    fun syncAllLocalToCloud(context: Context, repository: HospitalRepository) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                repository.getAllUsersDirect().forEach { syncUserToCloud(context, it) }
+                repository.getAllPatientsDirect().forEach { syncPatientToCloud(context, it) }
+                repository.getAllDocumentsDirect().forEach { syncDocumentToCloud(context, it) }
+                repository.getAllClinicalNotesDirect().forEach { syncClinicalNoteToCloud(context, it) }
+                repository.getAllCarePlansDirect().forEach { syncCarePlanToCloud(context, it) }
+                repository.getAllAttendanceDirect().forEach { syncAttendanceToCloud(context, it) }
+                repository.getAllVitalRecordsDirect().forEach { syncVitalRecordToCloud(context, it) }
+                (repository.allNotifications.firstOrNull() ?: emptyList()).forEach { publishNotificationToCloud(context, it) }
+            } catch (e: Exception) {
+                Log.w(TAG, "syncAllLocalToCloud notice: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Complete two-way sync between local device database and cloud Firestore.
-     * Reconciles from Cloud FIRST to prevent stale local data from overwriting fresh server records,
-     * then uploads any genuine new local entries to ensure exact parity across all phones.
+     * Pushes all local additions to Cloud FIRST, then reconciles server updates to ensure exact parity across all devices.
      */
     fun syncAllDataTwoWay(
         context: Context,
@@ -740,7 +788,9 @@ object CloudDatabaseManager {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Reconcile all data from Cloud to local database so we have the latest master roster & clinical records
+                // First upload all local records to Cloud
+                syncAllLocalToCloud(context, repository)
+                // Then reconcile server records down to local database
                 reconcileWithCloudServer(context, repository) { success ->
                     val syncTime = timeFormat.format(Date())
                     _isCloudConnected.value = true
@@ -766,6 +816,28 @@ object CloudDatabaseManager {
 
         // Seed cloud from local database if Firestore is freshly provisioned and empty
         seedCloudFromLocalIfEmpty(context, repository)
+
+        // Permanently purge deleted staff and sync local staff roster across Room and Cloud Firestore
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val deletedUserIds = listOf(
+                    "ADM-1001", "DOC-2001", "DOC-2002", "DOC-2003", "RMO-2101", "MSU-2201",
+                    "RMI-2301", "NUR-3001", "NUR-3002", "TEC-3501", "RCP-4001", "ACC-4002",
+                    "CSH-4201", "MNT-4401"
+                )
+                deletedUserIds.forEach { id ->
+                    repository.deleteUser(id)
+                    deleteUserFromCloud(context, id)
+                }
+                ensureBossUserExists(repository)
+                val currentLocalUsers = repository.getAllUsersDirect()
+                currentLocalUsers.forEach { user ->
+                    syncUserToCloud(context, user)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "User purge/sync error: ${e.message}")
+            }
+        }
 
         // 1. Listen for Shared Cloud Notifications & Push Alerts
         if (notificationListener == null) {
@@ -882,12 +954,7 @@ object CloudDatabaseManager {
                                         repository.deletePatient(id)
                                     }
                                     if (!isInitialPatientLoad && senderDeviceId != currentDeviceId) {
-                                        FcmManager.showSystemNotification(
-                                            context = context,
-                                            title = "🚪 Patient Record Removed",
-                                            body = "$remName removed from $remWard $remBed",
-                                            kind = "task"
-                                        )
+                                        // Patient removed event logged to repository without spamming system notifications
                                     }
                                     continue
                                 }
@@ -943,37 +1010,37 @@ object CloudDatabaseManager {
                                 vitalsUpdatedBy = vitalsBy
                             )
                             CoroutineScope(Dispatchers.IO).launch {
-                                repository.insertPatient(patient)
+                                var finalPatient = patient
+                                val localPt = repository.getPatientById(id)
+                                if (localPt != null) {
+                                    if (localPt.status.equals("DISCHARGED", ignoreCase = true) && !status.equals("DISCHARGED", ignoreCase = true)) {
+                                        finalPatient = finalPatient.copy(
+                                            status = "DISCHARGED",
+                                            dischargedOn = localPt.dischargedOn ?: dischargedOn,
+                                            dischargeSummary = localPt.dischargeSummary ?: dischargeSummary
+                                        )
+                                        syncPatientToCloud(context, finalPatient)
+                                    }
+                                    if (localPt.name.isNotBlank() && localPt.name != name && snapshot.metadata.hasPendingWrites()) {
+                                        finalPatient = finalPatient.copy(name = localPt.name)
+                                    }
+                                }
+                                repository.insertPatient(finalPatient)
                             }
 
-                            // Trigger real-time notifications for admission, discharge, and patient updates across all devices
+                            // Only alert on high-priority critical emergencies during real-time sync
                             val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
                             if (!isInitialPatientLoad && (senderDeviceId != currentDeviceId || isBackground)) {
-                                val isDischarged = status.equals("DISCHARGED", ignoreCase = true)
-                                val isNew = change.type == DocumentChange.Type.ADDED
-                                val title: String
-                                val body: String
-                                var isCritical = false
-
-                                if (isDischarged) {
-                                    title = "🚪 Patient Discharged: $name"
-                                    body = "$name discharged from $ward Bed $bed. Bed is now vacant."
-                                } else if (isNew) {
-                                    isCritical = condition.equals("Critical", ignoreCase = true) || condition.equals("Emergency", ignoreCase = true)
-                                    title = (if (isCritical) "🚨 " else "") + "🏥 New Patient Admitted: $name"
-                                    body = "Ward: $ward · Bed: $bed · Condition: $condition · Doctor: $doctorId"
-                                } else {
-                                    title = "🔄 Patient Updated: $name"
-                                    body = "Ward: $ward · Bed: $bed · Status: $status · Doctor: $doctorId"
+                                val isCritical = condition.equals("Critical", ignoreCase = true) || condition.equals("Emergency", ignoreCase = true)
+                                if (isCritical) {
+                                    FcmManager.showSystemNotification(
+                                        context = context,
+                                        title = "🚨 Critical Emergency Alert: $name",
+                                        body = "Ward: $ward · Bed: $bed · Condition: $condition",
+                                        kind = "emergency",
+                                        isCritical = true
+                                    )
                                 }
-
-                                FcmManager.showSystemNotification(
-                                    context = context,
-                                    title = title,
-                                    body = body,
-                                    kind = if (isCritical) "emergency" else "task",
-                                    isCritical = isCritical
-                                )
                             }
                         }
                         isInitialPatientLoad = false
@@ -1037,22 +1104,18 @@ object CloudDatabaseManager {
                                     joinedDate = joinedDate
                                 )
                                 CoroutineScope(Dispatchers.IO).launch {
-                                    repository.insertUser(user)
+                                    var finalUser = user
+                                    if (id == "BOSS-0001") {
+                                        finalUser = finalUser.copy(name = "BOSS", role = "BOSS")
+                                    } else {
+                                        val localU = repository.getUserById(id)
+                                        if (localU != null && localU.name.isNotBlank() && localU.name != name && snapshot.metadata.hasPendingWrites()) {
+                                            finalUser = finalUser.copy(name = localU.name)
+                                        }
+                                    }
+                                    repository.insertUser(finalUser)
                                 }
 
-                                if (!isInitialUserLoad && senderDeviceId != currentDeviceId) {
-                                    val title = if (change.type == DocumentChange.Type.ADDED) {
-                                        "👤 New Staff Registered: $name"
-                                    } else {
-                                        "👤 Staff Profile Updated: $name"
-                                    }
-                                    FcmManager.showSystemNotification(
-                                        context = context,
-                                        title = title,
-                                        body = "$role · Department: $dept · Login ID: $id",
-                                        kind = "admin"
-                                    )
-                                }
                             }
                             isInitialUserLoad = false
                         }
@@ -1109,21 +1172,7 @@ object CloudDatabaseManager {
                                     repository.insertDocument(document)
                                 }
 
-                                // Alert if a new or updated medical report, prescription, or scan was uploaded
-                                val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
-                                if (!isInitialDocLoad &&
-                                    (senderDeviceId.isBlank() || senderDeviceId != currentDeviceId || isBackground) &&
-                                    !seenNotificationIds.contains(id)
-                                ) {
-                                    seenNotificationIds.add(id)
-                                    val alertTitle = if (change.type == DocumentChange.Type.ADDED) "📄 New $category Uploaded" else "📄 $category Updated"
-                                    FcmManager.showSystemNotification(
-                                        context = context,
-                                        title = alertTitle,
-                                        body = "$title for Patient $patientId by $addedBy",
-                                        kind = "doc"
-                                    )
-                                }
+                                seenNotificationIds.add(id)
                             }
                             isInitialDocLoad = false
                         }
@@ -1157,7 +1206,6 @@ object CloudDatabaseManager {
                                 val text = doc.getString("text") ?: doc.getString("note") ?: ""
                                 val authorId = doc.getString("authorId") ?: doc.getString("doctorName") ?: "Doctor"
                                 val date = doc.getString("date") ?: ""
-                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
 
                                 val clinicalNote = ClinicalNoteEntity(
                                     id = id,
@@ -1168,16 +1216,6 @@ object CloudDatabaseManager {
                                 )
                                 CoroutineScope(Dispatchers.IO).launch {
                                     repository.insertClinicalNote(clinicalNote)
-                                }
-
-                                val isBackground = !com.example.service.AppLifecycleTracker.isAppInForeground
-                                if (!isInitialNotesLoad && (senderDeviceId.isBlank() || senderDeviceId != currentDeviceId || isBackground)) {
-                                    FcmManager.showSystemNotification(
-                                        context = context,
-                                        title = "📝 Clinical Note / Advice: Patient $patientId",
-                                        body = "Dr. $authorId: \"${text.take(80)}\"",
-                                        kind = "doc"
-                                    )
                                 }
                             }
                             isInitialNotesLoad = false
@@ -1263,7 +1301,6 @@ object CloudDatabaseManager {
                                 val date = doc.getString("date") ?: ""
                                 val time = doc.getString("time") ?: ""
                                 val method = doc.getString("method") ?: "Biometric"
-                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
 
                                 val attendance = AttendanceEntity(
                                     userId = userId,
@@ -1273,17 +1310,6 @@ object CloudDatabaseManager {
                                 )
                                 CoroutineScope(Dispatchers.IO).launch {
                                     repository.insertAttendance(attendance)
-                                }
-
-                                if (!isInitialAttendanceLoad && change.type == DocumentChange.Type.ADDED &&
-                                    (senderDeviceId.isBlank() || senderDeviceId != currentDeviceId)
-                                ) {
-                                    FcmManager.showSystemNotification(
-                                        context = context,
-                                        title = "⏱ Staff Attendance Logged",
-                                        body = "$userId checked in on $date at $time ($method)",
-                                        kind = "attendance"
-                                    )
                                 }
                             }
                             isInitialAttendanceLoad = false
@@ -1318,6 +1344,7 @@ object CloudDatabaseManager {
                                 val spo2 = doc.getString("spo2") ?: ""
                                 val pulse = doc.getString("pulse") ?: ""
                                 val bp = doc.getString("bloodPressure") ?: ""
+                                val cbg = doc.getString("cbg") ?: ""
                                 val recordedAt = doc.getString("recordedAt") ?: ""
                                 val recordedBy = doc.getString("recordedBy") ?: ""
 
@@ -1328,6 +1355,7 @@ object CloudDatabaseManager {
                                     spo2 = spo2,
                                     pulse = pulse,
                                     bloodPressure = bp,
+                                    cbg = cbg,
                                     recordedAt = recordedAt,
                                     recordedBy = recordedBy
                                 )
@@ -1534,11 +1562,11 @@ object CloudDatabaseManager {
                 db.collection(COLL_USERS).limit(1).get()
                     .addOnSuccessListener { usersSnap ->
                         if (usersSnap.isEmpty) {
-                            Log.d(TAG, "Cloud Firestore users collection is empty. Seeding initial staff roster...")
+                            Log.d(TAG, "Cloud Firestore users collection is empty. Seeding staff roster...")
                             CoroutineScope(Dispatchers.IO).launch {
-                                HospitalSeedData.users.forEach { user ->
-                                    syncUserToCloud(context, user)
-                                }
+                                val localUsers = repository.getAllUsersDirect()
+                                val usersToSeed = if (localUsers.isNotEmpty()) localUsers else HospitalSeedData.users
+                                usersToSeed.forEach { syncUserToCloud(context, it) }
                             }
                         }
                     }
@@ -1547,14 +1575,76 @@ object CloudDatabaseManager {
                 db.collection(COLL_PATIENTS).limit(1).get()
                     .addOnSuccessListener { patientsSnap ->
                         if (patientsSnap.isEmpty) {
-                            Log.d(TAG, "Cloud Firestore patients collection is empty. Seeding initial patient admissions...")
+                            Log.d(TAG, "Cloud Firestore patients collection is empty. Seeding patient admissions...")
                             CoroutineScope(Dispatchers.IO).launch {
-                                HospitalSeedData.patients.forEach { pt ->
-                                    syncPatientToCloud(context, pt)
-                                }
-                                HospitalSeedData.carePlans.forEach { cp ->
-                                    syncCarePlanToCloud(context, cp)
-                                }
+                                val localPatients = repository.getAllPatientsDirect()
+                                val ptsToSeed = if (localPatients.isNotEmpty()) localPatients else HospitalSeedData.patients
+                                ptsToSeed.forEach { syncPatientToCloud(context, it) }
+                            }
+                        }
+                    }
+
+                // Check if documents exist in cloud
+                db.collection(COLL_DOCUMENTS).limit(1).get()
+                    .addOnSuccessListener { docSnap ->
+                        if (docSnap.isEmpty) {
+                            Log.d(TAG, "Cloud Firestore documents collection is empty. Seeding medical records...")
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val localDocs = repository.getAllDocumentsDirect()
+                                val docsToSeed = if (localDocs.isNotEmpty()) localDocs else HospitalSeedData.documents
+                                docsToSeed.forEach { syncDocumentToCloud(context, it) }
+                            }
+                        }
+                    }
+
+                // Check if clinical notes exist in cloud
+                db.collection(COLL_CLINICAL_NOTES).limit(1).get()
+                    .addOnSuccessListener { noteSnap ->
+                        if (noteSnap.isEmpty) {
+                            Log.d(TAG, "Cloud Firestore clinical notes collection is empty. Seeding notes...")
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val localNotes = repository.getAllClinicalNotesDirect()
+                                val notesToSeed = if (localNotes.isNotEmpty()) localNotes else HospitalSeedData.clinicalNotes
+                                notesToSeed.forEach { syncClinicalNoteToCloud(context, it) }
+                            }
+                        }
+                    }
+
+                // Check if care plans exist in cloud
+                db.collection(COLL_CARE_PLANS).limit(1).get()
+                    .addOnSuccessListener { planSnap ->
+                        if (planSnap.isEmpty) {
+                            Log.d(TAG, "Cloud Firestore care plans collection is empty. Seeding care plans...")
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val localPlans = repository.getAllCarePlansDirect()
+                                val plansToSeed = if (localPlans.isNotEmpty()) localPlans else HospitalSeedData.carePlans
+                                plansToSeed.forEach { syncCarePlanToCloud(context, it) }
+                            }
+                        }
+                    }
+
+                // Check if attendance exists in cloud
+                db.collection(COLL_ATTENDANCE).limit(1).get()
+                    .addOnSuccessListener { attSnap ->
+                        if (attSnap.isEmpty) {
+                            Log.d(TAG, "Cloud Firestore attendance collection is empty. Seeding attendance...")
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val localAtt = repository.getAllAttendanceDirect()
+                                val attToSeed = if (localAtt.isNotEmpty()) localAtt else HospitalSeedData.attendances
+                                attToSeed.forEach { syncAttendanceToCloud(context, it) }
+                            }
+                        }
+                    }
+
+                // Check if notifications exist in cloud
+                db.collection(COLL_NOTIFICATIONS).limit(1).get()
+                    .addOnSuccessListener { notifSnap ->
+                        if (notifSnap.isEmpty) {
+                            Log.d(TAG, "Cloud Firestore notifications collection is empty. Seeding alerts...")
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val localNotifs = repository.allNotifications.firstOrNull() ?: emptyList()
+                                val notifsToSeed = if (localNotifs.isNotEmpty()) localNotifs else HospitalSeedData.notifications
+                                notifsToSeed.forEach { publishNotificationToCloud(context, it) }
                             }
                         }
                     }
@@ -1864,6 +1954,7 @@ object CloudDatabaseManager {
                 "spo2" to record.spo2,
                 "pulse" to record.pulse,
                 "bloodPressure" to record.bloodPressure,
+                "cbg" to record.cbg,
                 "recordedAt" to record.recordedAt,
                 "recordedBy" to record.recordedBy,
                 "senderDeviceId" to FcmManager.getDeviceId(context),
@@ -1879,11 +1970,11 @@ object CloudDatabaseManager {
     suspend fun ensureBossUserExists(repository: HospitalRepository) {
         try {
             val boss = repository.getUserById("BOSS-0001")
-            if (boss == null || boss.role != "BOSS" || boss.name.isBlank()) {
+            if (boss == null || boss.role != "BOSS" || boss.name.isBlank() || boss.name != "BOSS") {
                 val bossUser = UserEntity(
                     id = "BOSS-0001",
                     pass = if (!boss?.pass.isNullOrBlank()) boss!!.pass else "12345",
-                    name = "Dr. S. K. Bose",
+                    name = "BOSS",
                     role = "BOSS",
                     dept = "Administration",
                     specialty = "Owner · Full Access",

@@ -398,7 +398,7 @@ fun RxDocumentView(modifier: Modifier = Modifier) {
                         color = Color(0xFF0E7490)
                     )
                     Text(
-                        text = "Dr. Arif Khan · MD, DM (Cardiology) · Reg. WB-442211",
+                        text = "BOSS · MD, DM (Cardiology) · Reg. WB-442211",
                         fontSize = 8.sp,
                         color = Color(0xFF64748B)
                     )
@@ -464,7 +464,7 @@ fun RxDocumentView(modifier: Modifier = Modifier) {
             )
             Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = "Dr. A. Khan [Signed]",
+                text = "BOSS [Signed]",
                 fontSize = 8.5.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF0E7490)
