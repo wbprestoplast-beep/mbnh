@@ -290,14 +290,33 @@ object CloudDatabaseManager {
                     null
                 }
                 val cloudUserIds = mutableSetOf<String>()
+                val deletedStaffIds = setOf(
+                    "ADM-1001", "DOC-2001", "DOC-2002", "DOC-2003", "RMO-2101", "MSU-2201",
+                    "RMI-2301", "NUR-3001", "NUR-3002", "TEC-3501", "RCP-4001", "ACC-4002",
+                    "CSH-4201", "MNT-4401", "DOC-2004", "DOC-2005", "DOC-2006", "NUR-3003",
+                    "NUR-3004", "REC-4001", "REC-4002", "REC-4003"
+                )
+                val deletedStaffNames = setOf(
+                    "S. Gupta", "Rita Sharma", "P. Saha", "Dr. Arif Khan", "Dr. Priya Mehta",
+                    "Dr. J. Nandi", "G. Mandal", "Dr. B.K. Mukherjee", "Anita Das", "Sneha Roy",
+                    "M. Hussain", "Dr. Tanushree Paul", "Dr. Aniket Sen", "R. Verma"
+                )
+
                 if (userSnap != null && !userSnap.isEmpty) {
                     for (doc in userSnap.documents) {
                         val id = doc.getString("id") ?: doc.id
-                        cloudUserIds.add(id)
                         var name = doc.getString("name") ?: doc.getString("userName") ?: doc.getString("fullName") ?: id
-                        val role = if (id == "BOSS-0001") "BOSS" else (doc.getString("role") ?: "NURSE")
-                        val dept = doc.getString("dept") ?: doc.getString("department") ?: if (id == "BOSS-0001") "Administration" else "General"
-                        val spec = doc.getString("specialty") ?: if (id == "BOSS-0001") "Owner · Full Access" else "General"
+
+                        if (deletedStaffIds.contains(id) || deletedStaffNames.contains(name)) {
+                            repository.deleteUser(id)
+                            deleteUserFromCloud(context, id)
+                            continue
+                        }
+
+                        cloudUserIds.add(id)
+                        var role = doc.getString("role") ?: "NURSE"
+                        var dept = doc.getString("dept") ?: doc.getString("department") ?: "General"
+                        var spec = doc.getString("specialty") ?: "General"
                         val phone = doc.getString("phone") ?: ""
                         val email = doc.getString("email") ?: ""
                         val pass = doc.getString("pass") ?: "12345"
@@ -307,6 +326,15 @@ object CloudDatabaseManager {
                         val localUser = repository.getUserById(id)
                         if (id == "BOSS-0001") {
                             name = "BOSS"
+                            role = "BOSS"
+                            dept = "Administration"
+                            spec = "Owner · Full Access"
+                        } else if (id == "INC-4101") {
+                            name = "Ayendrila Roy"
+                            role = "INCHARGE"
+                        } else if (id == "MED-4301") {
+                            name = "Susanta Ghosh"
+                            role = "MEDICINE"
                         } else if (localUser != null && localUser.name.isNotBlank() && localUser.name != name) {
                             name = localUser.name
                         }
@@ -1074,28 +1102,52 @@ object CloudDatabaseManager {
                                 val pass = doc.getString("pass") ?: "12345"
                                 val photoUri = doc.getString("photoUri")?.ifBlank { null }
                                 val joinedDate = doc.getString("joinedDate") ?: doc.getString("joiningDate") ?: "2026-01-01"
-                                val senderDeviceId = doc.getString("senderDeviceId") ?: ""
+
+                                val deletedStaffIds = setOf(
+                                    "ADM-1001", "DOC-2001", "DOC-2002", "DOC-2003", "RMO-2101", "MSU-2201",
+                                    "RMI-2301", "NUR-3001", "NUR-3002", "TEC-3501", "RCP-4001", "ACC-4002",
+                                    "CSH-4201", "MNT-4401", "DOC-2004", "DOC-2005", "DOC-2006", "NUR-3003",
+                                    "NUR-3004", "REC-4001", "REC-4002", "REC-4003"
+                                )
+                                val deletedStaffNames = setOf(
+                                    "S. Gupta", "Rita Sharma", "P. Saha", "Dr. Arif Khan", "Dr. Priya Mehta",
+                                    "Dr. J. Nandi", "G. Mandal", "Dr. B.K. Mukherjee", "Anita Das", "Sneha Roy",
+                                    "M. Hussain", "Dr. Tanushree Paul", "Dr. Aniket Sen", "R. Verma"
+                                )
+
+                                if (deletedStaffIds.contains(id) || deletedStaffNames.contains(name)) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        repository.deleteUser(id)
+                                        deleteUserFromCloud(context, id)
+                                    }
+                                    continue
+                                }
 
                                 if (change.type == DocumentChange.Type.REMOVED) {
                                     CoroutineScope(Dispatchers.IO).launch {
                                         repository.deleteUser(id)
                                     }
-                                    if (!isInitialUserLoad && senderDeviceId != currentDeviceId) {
-                                        FcmManager.showSystemNotification(
-                                            context = context,
-                                            title = "👤 Staff Roster Updated",
-                                            body = "$name ($role) removed from staff registry",
-                                            kind = "admin"
-                                        )
-                                    }
                                     continue
+                                }
+
+                                var canonicalName = name
+                                var canonicalRole = role
+                                if (id == "BOSS-0001") {
+                                    canonicalName = "BOSS"
+                                    canonicalRole = "BOSS"
+                                } else if (id == "INC-4101") {
+                                    canonicalName = "Ayendrila Roy"
+                                    canonicalRole = "INCHARGE"
+                                } else if (id == "MED-4301") {
+                                    canonicalName = "Susanta Ghosh"
+                                    canonicalRole = "MEDICINE"
                                 }
 
                                 val user = UserEntity(
                                     id = id,
                                     pass = pass,
-                                    name = name,
-                                    role = role,
+                                    name = canonicalName,
+                                    role = canonicalRole,
                                     dept = dept,
                                     specialty = spec,
                                     phone = phone,
@@ -1105,13 +1157,9 @@ object CloudDatabaseManager {
                                 )
                                 CoroutineScope(Dispatchers.IO).launch {
                                     var finalUser = user
-                                    if (id == "BOSS-0001") {
-                                        finalUser = finalUser.copy(name = "BOSS", role = "BOSS")
-                                    } else {
-                                        val localU = repository.getUserById(id)
-                                        if (localU != null && localU.name.isNotBlank() && localU.name != name && snapshot.metadata.hasPendingWrites()) {
-                                            finalUser = finalUser.copy(name = localU.name)
-                                        }
+                                    val localU = repository.getUserById(id)
+                                    if (localU != null && localU.name.isNotBlank() && localU.name != canonicalName && id != "BOSS-0001" && id != "INC-4101" && id != "MED-4301" && snapshot.metadata.hasPendingWrites()) {
+                                        finalUser = finalUser.copy(name = localU.name)
                                     }
                                     repository.insertUser(finalUser)
                                 }

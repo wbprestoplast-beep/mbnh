@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
         VitalRecordEntity::class,
         NotificationEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
